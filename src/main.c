@@ -19,6 +19,13 @@ SDL_Color lightColor = {240, 217, 181, 255};
 SDL_Color darkColor = {181, 136, 99, 255};
 
 int running = 1;
+int turnCounter = 1;
+Piece* selectedPiece = NULL;
+int selectedX = -1;
+int selectedY = -1;
+int mouseX = 0;
+int mouseY = 0;
+int isDragging = 0;
 
 void renderBoard(SDL_Renderer* renderer) {
     // Render the chess board
@@ -68,12 +75,31 @@ void renderHighlight(SDL_Renderer* renderer, int x, int y) {
     SDL_RenderFillRect(renderer, &highlightRect);
 }
 
+void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[BOARD_SIZE]) {
+    int isValidMove = 0;
+    for (int i = 0; i < 28; ++i) {
+        if (validMoves[i].row == releaseY && validMoves[i].col == releaseX) {
+            isValidMove = 1;
+            // Handle pawn promotion
+            if (selectedPiece->type == PAWN && (releaseY == 0 || releaseY == 7)) {
+                // printf("Pawn promotion!\n");
+                selectedPiece->type = QUEEN;
+            }
+            board[releaseY][releaseX] = *selectedPiece;
+            board[selectedY][selectedX] = (Piece){EMPTY, WHITE};
+            // Increment the turn counter
+            turnCounter++;
+            // printf("Turn %d. It is %c's turn...\n", turnCounter, turnCounter % 2 == 0 ? 'B' : 'W');
+            break;
+        }
+    }
+}
 
 int main(int argc, char* argv[]) {
     // Initialize the board
     Piece (*board)[BOARD_SIZE] = initBoard();
     // Print the board (for debugging purposes)
-    printBoard();
+    // printBoard();
 
     SDL_Init(SDL_INIT_VIDEO);
     // Additional initialization code
@@ -83,7 +109,6 @@ int main(int argc, char* argv[]) {
         printf("TTF initialization failed: %s\n", TTF_GetError());
         return 1;
     }
-
 
     // Create the window
     SDL_Window* window = SDL_CreateWindow("Chess", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT, SDL_WINDOW_SHOWN);
@@ -99,6 +124,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+
     // Game loop
     while (running) {
         // Handle events
@@ -108,20 +134,52 @@ int main(int argc, char* argv[]) {
         while (SDL_PollEvent(&event)) {
             running = (event.type == SDL_QUIT || 
             (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)) ? 0 : running;
-
-            // Find the square the mouse is hovering over
-            if (event.type == SDL_MOUSEMOTION) {
+            if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                // Get the square the mouse is clicking on
                 int x, y;
                 SDL_GetMouseState(&x, &y);
                 int row = y / SQUARE_SIZE;
                 int col = x / SQUARE_SIZE;
+                // Check if the mouse is clicking on a non-empty square
+                if (board[row][col].type != EMPTY && turnCounter % 2 == board[row][col].color) {
+                    // printf("Mouse is clicking on piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
+                    // Compute the valid moves for the piece
+                    Position pos = {row, col};
+                    validMoves = computeValidMoves(pos, board[row][col], board);
+                    // Set the selected piece
+                    selectedPiece = &board[row][col];
+                    selectedX = col;
+                    selectedY = row;
+                    isDragging = 1;
+                }
+            } 
+            // else {
+            if (event.type == SDL_MOUSEMOTION) {
+                SDL_GetMouseState(&mouseX, &mouseY);
+                int row = mouseY / SQUARE_SIZE;
+                int col = mouseX / SQUARE_SIZE;
                 // Check if the mouse is hovering over a non-empty square
-                if (board[row][col].type != EMPTY) {
+                if (board[row][col].type != EMPTY && turnCounter % 2 == board[row][col].color && !isDragging) {
                     // printf("Mouse is hovering over piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
                     validMoves = computeValidMoves(pos, board[row][col], board);
+                } else if (!isDragging) {
+                    validMoves = NULL;
                 }
+            }
+            // }
+
+            if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT && isDragging) {
+                // Handle mouse button up
+                int releaseX = mouseX / SQUARE_SIZE;
+                int releaseY = mouseY / SQUARE_SIZE;
+                makeMove(validMoves, releaseX, releaseY, board);
+                // Reset dragging state
+                isDragging = 0;
+                selectedPiece = NULL;
+                selectedX = -1;
+                selectedY = -1;
             }
         }
         // Update game state
@@ -129,15 +187,6 @@ int main(int argc, char* argv[]) {
         // Render the chess board
         renderBoard(renderer);
         
-        for (int row = 0; row < BOARD_SIZE; ++row) {
-            for (int col = 0; col < BOARD_SIZE; ++col) {
-                Piece piece = board[row][col];
-                if (piece.type != EMPTY) {
-                    renderPiece(renderer, piece, col * SQUARE_SIZE, row * SQUARE_SIZE);
-                }
-            }
-        }
-
         // Render the valid moves - loop through the array of valid moves and render a highlight on each square
         if (validMoves != NULL) {
             for (int i = 0; i < 28; ++i) {
@@ -149,6 +198,16 @@ int main(int argc, char* argv[]) {
         } else {
             // Remove the highlights if the mouse is not hovering over a piece
         }
+
+        for (int row = 0; row < BOARD_SIZE; ++row) {
+            for (int col = 0; col < BOARD_SIZE; ++col) {
+                Piece piece = board[row][col];
+                if (piece.type != EMPTY) {
+                    renderPiece(renderer, piece, col * SQUARE_SIZE, row * SQUARE_SIZE);
+                }
+            }
+        }
+
 
         SDL_RenderPresent(renderer);
 

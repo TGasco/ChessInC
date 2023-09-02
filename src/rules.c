@@ -39,20 +39,16 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
     MoveVectorList vectors = getMoveVectors(piece);
     int numVectors = vectors.count;
     // If Bishop, Rook or Queen, then the piece can move any number of squares in the given direction
-    int iter;
-    if (piece.type == BISHOP || piece.type == ROOK || piece.type == QUEEN) {
-        iter = 7;
-    } else {
-        iter = 1;
-    }
+    int iter = (piece.type == BISHOP || piece.type == ROOK || piece.type == QUEEN) ? 7 : 1;
 
+    int direction = (piece.color == WHITE) ? 1 : -1;
     // Handle edge cases for Pawn moves
     if (piece.type == PAWN) {
-        int direction = (piece.color == WHITE) ? 1 : -1;
         // Check if the Pawn can move two squares forward from its starting position
         if (pos.row == (piece.color == WHITE ? 1 : 6)) {
             Position newPos = {pos.row + (2 * direction), pos.col};
-            if (is_valid_position(newPos.row, newPos.col, piece.color, board)) {
+            if (is_valid_position(newPos.row, newPos.col, piece.color, board) &&
+             board[newPos.row][newPos.col].type == EMPTY) {
                 validMoves[numValidMoves] = newPos;
                 numValidMoves++;
             }
@@ -68,25 +64,6 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
             validMoves[numValidMoves] = newPos;
             numValidMoves++;
         }
-
-        // Check if the Pawn can perform an en passant capture
-        // if (pos.row == (piece.color == WHITE ? 4 : 3)) {
-        //     // Check if there is a Pawn to the left or right of the current position
-        //     Position leftPos = {pos.row, pos.col - 1};
-        //     Position rightPos = {pos.row, pos.col + 1};
-        //     if (is_valid_position(leftPos.row, leftPos.col, piece.color, board) && board[leftPos.row][leftPos.col].type == PAWN && board[leftPos.row][leftPos.col].color != piece.color && board[leftPos.row][leftPos.col]) {
-        //         newPos.row = pos.row + direction;
-        //         newPos.col = pos.col - 1;
-        //         validMoves[numValidMoves] = newPos;
-        //         numValidMoves++;
-        //     }
-        //     if (is_valid_position(rightPos.row, rightPos.col, piece.color, board) && board[rightPos.row][rightPos.col].type == PAWN && board[rightPos.row][rightPos.col].color != piece.color && board[rightPos.row][rightPos.col]) {
-        //         newPos.row = pos.row + direction;
-        //         newPos.col = pos.col + 1;
-        //         validMoves[numValidMoves] = newPos;
-        //         numValidMoves++;
-        //     }
-        // }
     }
 
     // Iterate through the move vectors
@@ -95,20 +72,22 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
         MoveVector vector = vectors.vectors[i];
         // Compute the new position
         for (int j = 0; j < iter; ++j) {
-            if (piece.color == BLACK) {
-                // Flip the move vector if the piece is black
-                vector.dx *= -1;
-                vector.dy *= -1;
-            }
-            int newRow = (pos.row + vector.dy) * (j + 1);
-            int newCol = (pos.col + vector.dx) * (j + 1);
+            int newRow = pos.row + (vector.dy * direction * (j + 1));
+            int newCol = pos.col + (vector.dx * direction * (j + 1));
             // Check if the new position is valid
             if (is_valid_position(newRow, newCol, piece.color, board)) {
+                if (piece.type == PAWN && board[newRow][newCol].type != EMPTY) {
+                    break;
+                }
                 // Add the new position to the array of valid moves
                 Position newPos = {newRow, newCol};
                 validMoves[numValidMoves] = newPos;
                 // Increment the number of valid moves
                 numValidMoves++;
+                // If piece is of a different colour, then break out of the loop
+                if (board[newRow][newCol].type != EMPTY && board[newRow][newCol].color != piece.color) {
+                    break;
+                }
 
             } else {
                 // Break out of the loop if the new position is not valid

@@ -14,6 +14,8 @@ typedef struct {
 
 MoveVector pawnVectors[] = {
     {0, 1}, // Move forward
+
+    // Special pawn moves (implemented in rules.c)
     // {0, 2}, // Initial two-step move
     // {-1, 1}, // Diagonal capture left
     // {1, 1}, // Diagonal capture right
@@ -69,7 +71,7 @@ MoveVector kingVectors[] = {
 
 MoveVectorList pawnMoveVectors = {
     .vectors = pawnVectors,
-    .count = 4
+    .count = 1
 };
 
 MoveVectorList rookMoveVectors = {
