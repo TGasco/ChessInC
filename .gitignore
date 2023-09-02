@@ -1,0 +1,6 @@
+# Ignore files from git
+.DS_Store
+.vscode
+TODO
+bin
+obj
