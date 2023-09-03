@@ -9,8 +9,10 @@
 
 // Declare functions
 int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOARD_SIZE]);
-Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE]);
+Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE], int enPessant, int kingMoved, int rookMoved[2]);
 MoveVectorList getMoveVectors(Piece piece);
+char colToFile(int col);
+int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position* kingPos);
 
 int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOARD_SIZE]) {
     // A valid position is considered one which is not occupied by a piece of the same colour, 
@@ -27,7 +29,46 @@ int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOAR
     return 1;
 }
 
-Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE]) {
+int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position* kingPos) {
+    // Find if the given colour is in check
+    // If the given colour is in check, then return 1
+    // Otherwise, return 0
+
+    // Find the position of the king
+    Position king;
+    for (int row = 0; row < BOARD_SIZE; ++row) {
+        for (int col = 0; col < BOARD_SIZE; ++col) {
+            if (board[row][col].type == KING && board[row][col].color == colour) {
+                king.row = row;
+                king.col = col;
+                break;
+            }
+        }
+    }
+    // Store the position of the king in the given pointer
+    *kingPos = king;
+
+    // Iterate through the board
+    for (int row = 0; row < BOARD_SIZE; ++row) {
+        for (int col = 0; col < BOARD_SIZE; ++col) {
+            // If the current square is occupied by a piece of the opposite colour, then compute the valid moves for that piece
+            if (board[row][col].color != colour && board[row][col].type != EMPTY) {
+                Position pos = {row, col};
+                Position* validMoves = computeValidMoves(pos, board[row][col], board, -1, -1, (int[2]){-1, -1});
+                // Iterate through the valid moves
+                for (int i = 0; i < 28; ++i) {
+                    // If the valid move is the same as the position of the king, then the king is in check
+                    if (validMoves[i].row == king.row && validMoves[i].col == king.col) {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE], int enPessant, int kingMoved, int rookMoved[2]) {
     // Compute the valid moves for a piece at the given position on the given board
     // The valid moves are stored in the given array of valid moves
     // The number of valid moves is stored in the given integer pointer
@@ -44,70 +85,112 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
     int direction = (piece.color == WHITE) ? 1 : -1;
     // Handle edge cases for Pawn moves
     if (piece.type == PAWN) {
-        // Check if the Pawn can move two squares forward from its starting position
-        if (pos.row == (piece.color == WHITE ? 1 : 6)) {
-            Position newPos = {pos.row + (2 * direction), pos.col};
-            if (is_valid_position(newPos.row, newPos.col, piece.color, board) &&
-             board[newPos.row][newPos.col].type == EMPTY) {
-                validMoves[numValidMoves] = newPos;
+        int newRow = pos.row + direction;
+        int newCol = pos.col;
+
+        if (is_valid_position(newRow, newCol, piece.color, board) && board[newRow][newCol].type == EMPTY) {
+            validMoves[numValidMoves].row = newRow;
+            validMoves[numValidMoves].col = newCol;
+            (numValidMoves)++;
+            
+            if ((pos.row == 1 && piece.color == WHITE) || (pos.row == 6 && piece.color == BLACK)) {
+                newRow = pos.row + (2 * direction);
+                if (is_valid_position(newRow, newCol, piece.color, board) && board[newRow][newCol].type == EMPTY) {
+                    validMoves[numValidMoves].row = newRow;
+                    validMoves[numValidMoves].col = newCol;
+                    (numValidMoves)++;
+                }
+            }
+        }
+
+        // Check diagonal captures
+        for (int offset = -1; offset <= 1; offset += 2) {
+            newCol = pos.col + offset;
+            newRow = pos.row + direction;
+            if (is_valid_position(newRow, newCol, piece.color, board) && board[newRow][newCol].type != EMPTY) {
+                validMoves[numValidMoves].row = newRow;
+                validMoves[numValidMoves].col = newCol;
                 numValidMoves++;
             }
         }
-        // Check if the Pawn can capture a piece diagonally
-        Position newPos = {pos.row + direction, pos.col + 1};
-        if (is_valid_position(newPos.row, newPos.col, piece.color, board) && board[newPos.row][newPos.col].type != EMPTY) {
-            validMoves[numValidMoves] = newPos;
-            numValidMoves++;
-        }
-        newPos.col = pos.col - 1;
-        if (is_valid_position(newPos.row, newPos.col, piece.color, board) && board[newPos.row][newPos.col].type != EMPTY) {
-            validMoves[numValidMoves] = newPos;
-            numValidMoves++;
-        }
-    }
 
-    // Iterate through the move vectors
-    for (int i = 0; i < numVectors; ++i) {
-        // Get the current move vector
-        MoveVector vector = vectors.vectors[i];
-        // Compute the new position
-        for (int j = 0; j < iter; ++j) {
-            int newRow = pos.row + (vector.dy * direction * (j + 1));
-            int newCol = pos.col + (vector.dx * direction * (j + 1));
-            // Check if the new position is valid
-            if (is_valid_position(newRow, newCol, piece.color, board)) {
-                if (piece.type == PAWN && board[newRow][newCol].type != EMPTY) {
-                    break;
-                }
-                // Add the new position to the array of valid moves
-                Position newPos = {newRow, newCol};
-                validMoves[numValidMoves] = newPos;
-                // Increment the number of valid moves
+        // Check for en passant
+        if ((enPessant == pos.col -1 || enPessant == pos.col + 1) && (pos.row == 4 || pos.row == 3)) {
+            newRow = pos.row + direction;
+            newCol = enPessant;
+            if (is_valid_position(newRow, newCol, piece.color, board) && board[newRow][newCol].type == EMPTY) {
+                validMoves[numValidMoves].row = newRow;
+                validMoves[numValidMoves].col = newCol;
                 numValidMoves++;
-                // If piece is of a different colour, then break out of the loop
-                if (board[newRow][newCol].type != EMPTY && board[newRow][newCol].color != piece.color) {
+            }
+        }
+    } else {
+        // Iterate through the move vectors
+        for (int i = 0; i < numVectors; ++i) {
+            // Get the current move vector
+            MoveVector vector = vectors.vectors[i];
+            // Compute the new position
+            for (int j = 0; j < iter; ++j) {
+                int newRow = pos.row + (vector.dy * direction * (j + 1));
+                int newCol = pos.col + (vector.dx * direction * (j + 1));
+                // Check if the new position is valid
+                if (is_valid_position(newRow, newCol, piece.color, board)) {
+                    if (piece.type == PAWN && board[newRow][newCol].type != EMPTY) {
+                        break;
+                    }
+                    // Add the new position to the array of valid moves
+                    Position newPos = {newRow, newCol};
+                    validMoves[numValidMoves] = newPos;
+                    // Increment the number of valid moves
+                    numValidMoves++;
+                    // If piece is of a different colour, then break out of the loop
+                    if (board[newRow][newCol].type != EMPTY && board[newRow][newCol].color != piece.color) {
+                        break;
+                    }
+
+                } else {
+                    // Break out of the loop if the new position is not valid
                     break;
                 }
+            }
+        }
 
-            } else {
-                // Break out of the loop if the new position is not valid
-                break;
+        // Check for castling
+        if (piece.type == KING) {
+            // Check for castling on the king side
+            if (kingMoved == 0 && rookMoved[0] == 0) {
+                int valid = 1;
+                int direction = (piece.color == WHITE) ? 1 : -1; // Adjust direction based on piece color
+                for (int i = 1; i <= 2; ++i) {
+                    if (board[pos.row][pos.col + direction * i].type != EMPTY) {
+                        valid = 0;
+                        break;
+                    }
+                }
+                if (valid) {
+                    validMoves[numValidMoves].row = pos.row;
+                    validMoves[numValidMoves].col = pos.col + direction * 2;
+                    numValidMoves++;
+                }
+            }
+            // Check for castling on the queen side
+            if (kingMoved == 0 && rookMoved[1] == 0) {
+                int valid = 1;
+                int direction = (piece.color == WHITE) ? 1 : -1; // Adjust direction based on piece color
+                for (int i = 1; i <= 3; ++i) {
+                    if (board[pos.row][pos.col - direction * i].type != EMPTY) {
+                        valid = 0;
+                        break;
+                    }
+                }
+                if (valid) {
+                    validMoves[numValidMoves].row = pos.row;
+                    validMoves[numValidMoves].col = pos.col - direction * 2;
+                    numValidMoves++;
+                }
             }
         }
     }
-    // // Print the list of valid moves (for debugging purposes)
-    // if (numValidMoves > 0) {
-
-    //     printf("Valid moves for %c at %d, %d: ", pieceToChar(piece), pos.col, pos.row);
-    //     for (int i = 0; i < numValidMoves; ++i) {
-    //         printf("{%d, %d}, ", validMoves[i].col, validMoves[i].row);
-    //     }
-    //     printf("\n");
-    //     // Return the array of valid moves and the number of valid moves
-    // } else {
-    //     printf("No valid moves for %c at %d, %d\n", pieceToChar(piece), pos.col, pos.row);
-    // }
-    
     return validMoves;
 }
 
@@ -129,4 +212,27 @@ MoveVectorList getMoveVectors(Piece piece) {
         default:
             return pawnMoveVectors;
     }
+}
+
+char colToFile(int col) {
+    // Convert the given column number to a file letter
+    switch(col) {
+        case 0:
+            return 'a';
+        case 1:
+            return 'b';
+        case 2:
+            return 'c';
+        case 3:
+            return 'd';
+        case 4:
+            return 'e';
+        case 5:
+            return 'f';
+        case 6:
+            return 'g';
+        case 7:
+            return 'h';
+    }
+    return '?';
 }

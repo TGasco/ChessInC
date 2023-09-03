@@ -2,6 +2,7 @@
 #include <string.h>
 #include <SDL.h>
 #include <SDL_ttf.h>
+#include <SDL_image.h>
 #include "../include/board.h"
 #include "../include/rules.h"
 // #include <SDL_image.h> // You might need this for loading images
@@ -26,6 +27,19 @@ int selectedY = -1;
 int mouseX = 0;
 int mouseY = 0;
 int isDragging = 0;
+int enPassant = -1;
+int whiteKingMoved = 0;
+int blackKingMoved = 0;
+int whiteRookMoved[] = {0, 0};
+int blackRookMoved[] = {0, 0};
+int turnStart = 1;
+Position* kingPos = NULL;
+int check = 0;
+
+void loadPieceSprites() {
+    // Load the piece sprites
+
+}
 
 void renderBoard(SDL_Renderer* renderer) {
     // Render the chess board
@@ -46,24 +60,12 @@ void renderBoard(SDL_Renderer* renderer) {
 
 void renderPiece(SDL_Renderer* renderer, Piece piece, int x, int y) {
     // Render a piece on the board
-    // Set color and font size
-    SDL_Color textColor = {0, 0, 0, 255}; // Black color for text
-    TTF_Font* font = TTF_OpenFont(ASSET_PATH, 24); // Load a font of your choice
-    char pieceStr[2] = { pieceToChar(piece), '\0' };
-    SDL_Surface* textSurface = TTF_RenderText_Solid(font, pieceStr, textColor);
-    SDL_Texture* textTexture = SDL_CreateTextureFromSurface(renderer, textSurface);
-
-    int width, height;
-    SDL_QueryTexture(textTexture, NULL, NULL, &width, &height);
-    
-    SDL_Rect destRect = {x + SQUARE_SIZE / 2 - width / 2, y + SQUARE_SIZE / 2 - height / 2, width, height};
-
-    SDL_RenderCopy(renderer, textTexture, NULL, &destRect);
+    SDL_Texture* pieceTexture = IMG_LoadTexture(renderer, piece.sprite);
+    SDL_Rect destRect = {x, y, SQUARE_SIZE, SQUARE_SIZE};
+    SDL_RenderCopy(renderer, pieceTexture, NULL, &destRect);
 
     // Cleanup
-    SDL_FreeSurface(textSurface);
-    SDL_DestroyTexture(textTexture);
-    TTF_CloseFont(font);
+    SDL_DestroyTexture(pieceTexture);
 }
 
 void renderHighlight(SDL_Renderer* renderer, int x, int y) {
@@ -75,25 +77,100 @@ void renderHighlight(SDL_Renderer* renderer, int x, int y) {
     SDL_RenderFillRect(renderer, &highlightRect);
 }
 
+void moveToNotation(Piece piece, Position posFrom, Position posTo, int capture) {
+    // Convert a move to algebraic notation
+    char notation[10];  // Assuming a reasonable maximum length for the notation
+
+    if (piece.type != PAWN) {
+        snprintf(notation, sizeof(notation), "%c", pieceToChar(piece));
+    }
+
+    if (capture) {
+        if (piece.type == PAWN) {
+            snprintf(notation, sizeof(notation), "%c", colToFile(posFrom.col));
+        }
+        strcat(notation, "x");
+    }
+
+    printf("%s%c%d\n", notation, colToFile(posTo.col), 8 - posTo.row);
+}
+
+
 void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[BOARD_SIZE]) {
     int isValidMove = 0;
+    int direction = (selectedPiece->color == WHITE) ? 1 : -1;
     for (int i = 0; i < 28; ++i) {
         if (validMoves[i].row == releaseY && validMoves[i].col == releaseX) {
             isValidMove = 1;
             // Handle pawn promotion
-            if (selectedPiece->type == PAWN && (releaseY == 0 || releaseY == 7)) {
-                // printf("Pawn promotion!\n");
+            if (selectedPiece->type == PAWN && (releaseY == 0 || releaseY == 7) && board[releaseY][releaseX].type == EMPTY) {
                 selectedPiece->type = QUEEN;
             }
+            if (selectedPiece->type == PAWN && (releaseY == selectedY + 2 || releaseY == selectedY - 2)) {
+                enPassant = releaseX;
+                printf("En pessant opportunity of %c file\n", colToFile(enPassant));
+            }
+
+            // Handle en passant
+            if (selectedPiece->type == PAWN && releaseX == enPassant && (releaseY == selectedY + 1 || releaseY == selectedY - 1)) {
+                board[selectedY][enPassant] = (Piece){EMPTY, WHITE};
+                // Reset en passant flag
+                enPassant = -1;
+            }
+
+            if (selectedPiece->type == KING) {
+                if (selectedPiece->color == WHITE) {
+                    whiteKingMoved = 1;
+                } else {
+                    blackKingMoved = 1;
+                }
+                // Check if the king is castling
+                if (releaseX == selectedX + direction * 2) {
+                    // King side castle
+                    board[releaseY][releaseX - direction * 1] = board[releaseY][releaseX + direction * 1];
+                    board[releaseY][releaseX + direction * 1] = (Piece){EMPTY, WHITE};
+                } else if (releaseX == selectedX - direction * 2) {
+                    // Queen side castle
+                    board[releaseY][releaseX + direction * 1] = board[releaseY][releaseX - direction * 2];
+                    board[releaseY][releaseX - direction * 2] = (Piece){EMPTY, WHITE};
+                }
+            } else if (selectedPiece->type == ROOK) {
+                if (selectedPiece->color == WHITE) {
+                    if (selectedX == 0) {
+                        whiteRookMoved[0] = 1;
+                    } else if (selectedX == 7) {
+                        whiteRookMoved[1] = 1;
+                    }
+                } else {
+                    if (selectedX == 0) {
+                        blackRookMoved[0] = 1;
+                    } else if (selectedX == 7) {
+                        blackRookMoved[1] = 1;
+                    }
+                }
+            }
+            moveToNotation(*selectedPiece, (Position){selectedY, selectedX}, (Position){releaseY, releaseX}, board[releaseY][releaseX].type != EMPTY);
+
             board[releaseY][releaseX] = *selectedPiece;
             board[selectedY][selectedX] = (Piece){EMPTY, WHITE};
+
+            // Find check (if exists)
+            check = findCheck(board, turnCounter % 2 == 0 ? WHITE : BLACK, &kingPos);
+            if (check) {
+                printf("Check discovered!\n");
+            }
+
+            // Check if two-step pawn move was made, set en passant flag if so
             // Increment the turn counter
             turnCounter++;
+            turnStart = 1;
+            // Print the move in algebraic notation
             // printf("Turn %d. It is %c's turn...\n", turnCounter, turnCounter % 2 == 0 ? 'B' : 'W');
             break;
         }
     }
 }
+
 
 int main(int argc, char* argv[]) {
     // Initialize the board
@@ -129,6 +206,11 @@ int main(int argc, char* argv[]) {
     while (running) {
         // Handle events
         // Exit if the ESC key is pressed
+        if (turnStart) {
+            printf("Turn %d: %c to move.\n", turnCounter, turnCounter % 2 == 0 ? 'b' : 'w');
+            turnStart = 0;
+        }
+
         SDL_Event event;
         Position* validMoves;
         while (SDL_PollEvent(&event)) {
@@ -145,7 +227,10 @@ int main(int argc, char* argv[]) {
                     // printf("Mouse is clicking on piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
-                    validMoves = computeValidMoves(pos, board[row][col], board);
+                    int kingMoved = board[row][col].type == KING ? board[row][col].color == WHITE ? whiteKingMoved : blackKingMoved : 0;
+                    int* rookMoved = board[row][col].type == ROOK ? board[row][col].color == WHITE ? whiteRookMoved : blackRookMoved : 0;
+                    printf("Rook (a) moved: %d \t Rook (h) moved: %d\n", rookMoved[0], rookMoved[1]);
+                    validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
                     // Set the selected piece
                     selectedPiece = &board[row][col];
                     selectedX = col;
@@ -163,7 +248,10 @@ int main(int argc, char* argv[]) {
                     // printf("Mouse is hovering over piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
-                    validMoves = computeValidMoves(pos, board[row][col], board);
+                    int kingMoved = board[row][col].type == KING ? board[row][col].color == WHITE ? whiteKingMoved : blackKingMoved : 0;
+                    int* rookMoved = board[row][col].type == ROOK ? board[row][col].color == WHITE ? whiteRookMoved : blackRookMoved : 0;
+                    printf("Rook (a) moved: %d \t Rook (h) moved: %d\n", rookMoved[0], rookMoved[1]);
+                    validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
                 } else if (!isDragging) {
                     validMoves = NULL;
                 }
