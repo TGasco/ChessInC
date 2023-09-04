@@ -33,13 +33,9 @@ int blackKingMoved = 0;
 int whiteRookMoved[] = {0, 0};
 int blackRookMoved[] = {0, 0};
 int turnStart = 1;
-Position* kingPos = NULL;
+Position whiteKingPos = (Position){7, 4};
+Position blackKingPos = (Position){0, 4};
 int check = 0;
-
-void loadPieceSprites() {
-    // Load the piece sprites
-
-}
 
 void renderBoard(SDL_Renderer* renderer) {
     // Render the chess board
@@ -119,20 +115,23 @@ void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[B
             }
 
             if (selectedPiece->type == KING) {
+                Position pos = (Position){releaseY, releaseX};
                 if (selectedPiece->color == WHITE) {
                     whiteKingMoved = 1;
+                    whiteKingPos = pos;
                 } else {
                     blackKingMoved = 1;
+                    blackKingPos = pos;
                 }
                 // Check if the king is castling
-                if (releaseX == selectedX + direction * 2) {
+                if (releaseX == selectedX + 2) {
                     // King side castle
-                    board[releaseY][releaseX - direction * 1] = board[releaseY][releaseX + direction * 1];
-                    board[releaseY][releaseX + direction * 1] = (Piece){EMPTY, WHITE};
+                    board[releaseY][releaseX - 1] = board[releaseY][releaseX +1];
+                    board[releaseY][releaseX +1] = (Piece){EMPTY, WHITE};
                 } else if (releaseX == selectedX - direction * 2) {
                     // Queen side castle
-                    board[releaseY][releaseX + direction * 1] = board[releaseY][releaseX - direction * 2];
-                    board[releaseY][releaseX - direction * 2] = (Piece){EMPTY, WHITE};
+                    board[releaseY][releaseX + 1] = board[releaseY][releaseX - 2];
+                    board[releaseY][releaseX - 2] = (Piece){EMPTY, WHITE};
                 }
             } else if (selectedPiece->type == ROOK) {
                 if (selectedPiece->color == WHITE) {
@@ -155,7 +154,7 @@ void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[B
             board[selectedY][selectedX] = (Piece){EMPTY, WHITE};
 
             // Find check (if exists)
-            check = findCheck(board, turnCounter % 2 == 0 ? WHITE : BLACK, &kingPos);
+            check = findCheck(board, turnCounter % 2 == 0 ? BLACK : WHITE, turnCounter % 2 == 0 ? whiteKingPos : blackKingPos);
             if (check) {
                 printf("Check discovered!\n");
             }
@@ -165,7 +164,6 @@ void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[B
             turnCounter++;
             turnStart = 1;
             // Print the move in algebraic notation
-            // printf("Turn %d. It is %c's turn...\n", turnCounter, turnCounter % 2 == 0 ? 'B' : 'W');
             break;
         }
     }
@@ -208,6 +206,9 @@ int main(int argc, char* argv[]) {
         // Exit if the ESC key is pressed
         if (turnStart) {
             printf("Turn %d: %c to move.\n", turnCounter, turnCounter % 2 == 0 ? 'b' : 'w');
+            if (turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved) {
+                printf("King has moved!\n");
+            }
             turnStart = 0;
         }
 
@@ -227,9 +228,8 @@ int main(int argc, char* argv[]) {
                     // printf("Mouse is clicking on piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
-                    int kingMoved = board[row][col].type == KING ? board[row][col].color == WHITE ? whiteKingMoved : blackKingMoved : 0;
-                    int* rookMoved = board[row][col].type == ROOK ? board[row][col].color == WHITE ? whiteRookMoved : blackRookMoved : 0;
-                    printf("Rook (a) moved: %d \t Rook (h) moved: %d\n", rookMoved[0], rookMoved[1]);
+                    int kingMoved = turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved;
+                    int* rookMoved = turnCounter % 2 == 0 ? whiteRookMoved : blackRookMoved;
                     validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
                     // Set the selected piece
                     selectedPiece = &board[row][col];
@@ -248,9 +248,8 @@ int main(int argc, char* argv[]) {
                     // printf("Mouse is hovering over piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
-                    int kingMoved = board[row][col].type == KING ? board[row][col].color == WHITE ? whiteKingMoved : blackKingMoved : 0;
-                    int* rookMoved = board[row][col].type == ROOK ? board[row][col].color == WHITE ? whiteRookMoved : blackRookMoved : 0;
-                    printf("Rook (a) moved: %d \t Rook (h) moved: %d\n", rookMoved[0], rookMoved[1]);
+                    int kingMoved = turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved;
+                    int* rookMoved = turnCounter % 2 == 0 ? whiteRookMoved : blackRookMoved;
                     validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
                 } else if (!isDragging) {
                     validMoves = NULL;
@@ -278,7 +277,7 @@ int main(int argc, char* argv[]) {
         // Render the valid moves - loop through the array of valid moves and render a highlight on each square
         if (validMoves != NULL) {
             for (int i = 0; i < 28; ++i) {
-                if (validMoves[i].row == 0 && validMoves[i].col == 0) {
+                if (validMoves[i].row == -1 && validMoves[i].col == -1) {
                     break;
                 }
                 renderHighlight(renderer, validMoves[i].col * SQUARE_SIZE, validMoves[i].row * SQUARE_SIZE);

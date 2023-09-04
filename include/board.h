@@ -32,7 +32,7 @@ static const char* pieceSprites[] = {
 typedef struct {
     PieceType type;
     PieceColor color;
-    char* sprite;
+    const char* sprite;
 } Piece;
 
 typedef struct {

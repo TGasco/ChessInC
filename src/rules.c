@@ -12,7 +12,7 @@ int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOAR
 Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE], int enPessant, int kingMoved, int rookMoved[2]);
 MoveVectorList getMoveVectors(Piece piece);
 char colToFile(int col);
-int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position* kingPos);
+int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position kingPos);
 
 int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOARD_SIZE]) {
     // A valid position is considered one which is not occupied by a piece of the same colour, 
@@ -29,24 +29,14 @@ int is_valid_position(int row, int col, int colour, Piece board[BOARD_SIZE][BOAR
     return 1;
 }
 
-int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position* kingPos) {
+int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position kingPos) {
     // Find if the given colour is in check
     // If the given colour is in check, then return 1
     // Otherwise, return 0
 
     // Find the position of the king
-    Position king;
-    for (int row = 0; row < BOARD_SIZE; ++row) {
-        for (int col = 0; col < BOARD_SIZE; ++col) {
-            if (board[row][col].type == KING && board[row][col].color == colour) {
-                king.row = row;
-                king.col = col;
-                break;
-            }
-        }
-    }
-    // Store the position of the king in the given pointer
-    *kingPos = king;
+    int check = 0;
+    printf("King position: %d, %d\n", kingPos.row, kingPos.col);
 
     // Iterate through the board
     for (int row = 0; row < BOARD_SIZE; ++row) {
@@ -58,14 +48,16 @@ int findCheck(Piece board[BOARD_SIZE][BOARD_SIZE], int colour, Position* kingPos
                 // Iterate through the valid moves
                 for (int i = 0; i < 28; ++i) {
                     // If the valid move is the same as the position of the king, then the king is in check
-                    if (validMoves[i].row == king.row && validMoves[i].col == king.col) {
-                        return 1;
+                    if (validMoves[i].row == kingPos.row && validMoves[i].col == kingPos.col) {
+                        printf("Move %c%d%c%d puts the king in check\n", colToFile(col), row + 1, colToFile(kingPos.col), kingPos.row + 1);
+                        // return 1;
+                        check = 1;
                     }
                 }
             }
         }
     }
-    return 0;
+    return check;
 }
 
 Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][BOARD_SIZE], int enPessant, int kingMoved, int rookMoved[2]) {
@@ -76,6 +68,10 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
     // Initialize the number of valid moves to 0
     int numValidMoves = 0;
     Position* validMoves = malloc(sizeof(Position) * 28);
+    for (int i = 0; i < 28; i++) {
+        validMoves[i].row = -1;
+        validMoves[i].col = -1;
+    }
     // Get the Move Vectors for the given piece
     MoveVectorList vectors = getMoveVectors(piece);
     int numVectors = vectors.count;
@@ -158,34 +154,32 @@ Position* computeValidMoves(Position pos, Piece piece, Piece board[BOARD_SIZE][B
         // Check for castling
         if (piece.type == KING) {
             // Check for castling on the king side
-            if (kingMoved == 0 && rookMoved[0] == 0) {
+            if (kingMoved == 0 && rookMoved[1] == 0) {
                 int valid = 1;
-                int direction = (piece.color == WHITE) ? 1 : -1; // Adjust direction based on piece color
                 for (int i = 1; i <= 2; ++i) {
-                    if (board[pos.row][pos.col + direction * i].type != EMPTY) {
+                    if (board[pos.row][pos.col + i].type != EMPTY) {
                         valid = 0;
                         break;
                     }
                 }
                 if (valid) {
                     validMoves[numValidMoves].row = pos.row;
-                    validMoves[numValidMoves].col = pos.col + direction * 2;
+                    validMoves[numValidMoves].col = pos.col + 2;
                     numValidMoves++;
                 }
             }
             // Check for castling on the queen side
-            if (kingMoved == 0 && rookMoved[1] == 0) {
+            if (kingMoved == 0 && rookMoved[0] == 0) {
                 int valid = 1;
-                int direction = (piece.color == WHITE) ? 1 : -1; // Adjust direction based on piece color
                 for (int i = 1; i <= 3; ++i) {
-                    if (board[pos.row][pos.col - direction * i].type != EMPTY) {
+                    if (board[pos.row][pos.col - i].type != EMPTY) {
                         valid = 0;
                         break;
                     }
                 }
                 if (valid) {
                     validMoves[numValidMoves].row = pos.row;
-                    validMoves[numValidMoves].col = pos.col - direction * 2;
+                    validMoves[numValidMoves].col = pos.col - 2;
                     numValidMoves++;
                 }
             }

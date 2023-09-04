@@ -15,11 +15,9 @@ PieceColor getColor(Position pos) {
 Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE] {
     // Initialize the back rank for both white and black pieces
     PieceType backRank[] = {ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK};
-    int reverse = 7;
     for (int col = 0; col < BOARD_SIZE; col++) {
         board[0][col] = (Piece){backRank[col], WHITE, pieceSprites[(int)(backRank[col]) - 1]};
-        board[7][col] = (Piece){backRank[reverse], BLACK, pieceSprites[((int)(backRank[reverse])) + 5]};
-        reverse--;
+        board[7][col] = (Piece){backRank[col], BLACK, pieceSprites[((int)(backRank[col])) + 5]};
     }
 
     // Initialize the front rank for both white and black pawns
@@ -31,11 +29,11 @@ Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE] {
     // Initialize the rest of the board with empty squares
     for (int row = 2; row < 6; row++) {
         for (int col = 0; col < BOARD_SIZE; col++) {
-            board[row][col] = (Piece){EMPTY, WHITE};
+            board[row][col] = (Piece){EMPTY, WHITE, NULL};
         }
     }
 
-    return board;
+    return &board;
 }
 
 char pieceToChar(Piece piece) {
