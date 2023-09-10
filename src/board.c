@@ -92,3 +92,10 @@ void printBoard() {
         printf("\n");
     }
 }
+
+int squareToBitIndex(const char* square) {
+    // Convert the given square to a bit index
+    int file = square[0] - 'a';
+    int rank= 8 - (square[1] - '0');
+    return rank * 8 + file;
+}

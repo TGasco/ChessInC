@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <SDL.h>
 #include <SDL_ttf.h>
 #include <SDL_image.h>
@@ -35,7 +36,8 @@ int blackRookMoved[] = {0, 0};
 int turnStart = 1;
 Position whiteKingPos = (Position){7, 4};
 Position blackKingPos = (Position){0, 4};
-int check = 0;
+Position* checkMoves;
+Position** validMovesLookup;
 
 void renderBoard(SDL_Renderer* renderer) {
     // Render the chess board
@@ -62,6 +64,13 @@ void renderPiece(SDL_Renderer* renderer, Piece piece, int x, int y) {
 
     // Cleanup
     SDL_DestroyTexture(pieceTexture);
+}
+
+void renderPieceAtMouse(SDL_Renderer* renderer, Piece piece) {
+    // Render a piece at the current mouse position
+    int mouseX, mouseY;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    renderPiece(renderer, piece, mouseX - SQUARE_SIZE / 2, mouseY - SQUARE_SIZE / 2);
 }
 
 void renderHighlight(SDL_Renderer* renderer, int x, int y) {
@@ -94,41 +103,41 @@ void moveToNotation(Piece piece, Position posFrom, Position posTo, int capture) 
 
 void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[BOARD_SIZE]) {
     int isValidMove = 0;
-    int direction = (selectedPiece->color == WHITE) ? 1 : -1;
+    int enPessantFlag = 0;
     for (int i = 0; i < 28; ++i) {
         if (validMoves[i].row == releaseY && validMoves[i].col == releaseX) {
             isValidMove = 1;
             // Handle pawn promotion
             if (selectedPiece->type == PAWN && (releaseY == 0 || releaseY == 7) && board[releaseY][releaseX].type == EMPTY) {
                 selectedPiece->type = QUEEN;
+                selectedPiece->sprite = pieceSprites[4 + selectedPiece->color * 6];
             }
             if (selectedPiece->type == PAWN && (releaseY == selectedY + 2 || releaseY == selectedY - 2)) {
                 enPassant = releaseX;
-                printf("En pessant opportunity of %c file\n", colToFile(enPassant));
+                enPessantFlag = 1;
+                printf("En pessant opportunity on %c file\n", colToFile(enPassant));
             }
 
             // Handle en passant
-            if (selectedPiece->type == PAWN && releaseX == enPassant && (releaseY == selectedY + 1 || releaseY == selectedY - 1)) {
-                board[selectedY][enPassant] = (Piece){EMPTY, WHITE};
-                // Reset en passant flag
-                enPassant = -1;
+            if (selectedPiece->type == PAWN && releaseX != selectedX && board[releaseY][releaseX].type == EMPTY) {
+                board[selectedY][releaseX] = (Piece){EMPTY, WHITE};
             }
 
             if (selectedPiece->type == KING) {
                 Position pos = (Position){releaseY, releaseX};
                 if (selectedPiece->color == WHITE) {
-                    whiteKingMoved = 1;
-                    whiteKingPos = pos;
-                } else {
                     blackKingMoved = 1;
                     blackKingPos = pos;
+                } else {
+                    whiteKingMoved = 1;
+                    whiteKingPos = pos;
                 }
                 // Check if the king is castling
                 if (releaseX == selectedX + 2) {
                     // King side castle
-                    board[releaseY][releaseX - 1] = board[releaseY][releaseX +1];
-                    board[releaseY][releaseX +1] = (Piece){EMPTY, WHITE};
-                } else if (releaseX == selectedX - direction * 2) {
+                    board[releaseY][releaseX - 1] = board[releaseY][releaseX + 1];
+                    board[releaseY][releaseX + 1] = (Piece){EMPTY, WHITE};
+                } else if (releaseX == selectedX - 2) {
                     // Queen side castle
                     board[releaseY][releaseX + 1] = board[releaseY][releaseX - 2];
                     board[releaseY][releaseX - 2] = (Piece){EMPTY, WHITE};
@@ -153,19 +162,18 @@ void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[B
             board[releaseY][releaseX] = *selectedPiece;
             board[selectedY][selectedX] = (Piece){EMPTY, WHITE};
 
-            // Find check (if exists)
-            check = findCheck(board, turnCounter % 2 == 0 ? BLACK : WHITE, turnCounter % 2 == 0 ? whiteKingPos : blackKingPos);
-            if (check) {
-                printf("Check discovered!\n");
-            }
-
             // Check if two-step pawn move was made, set en passant flag if so
             // Increment the turn counter
             turnCounter++;
             turnStart = 1;
             // Print the move in algebraic notation
             break;
+        } else if (validMoves[i].row == -1 && validMoves[i].col == -1) {
+            break;
         }
+    }
+    if (enPassant != -1 && !enPessantFlag) {
+        enPassant = -1;
     }
 }
 
@@ -173,6 +181,8 @@ void makeMove(Position* validMoves, int releaseX, int releaseY, Piece (*board)[B
 int main(int argc, char* argv[]) {
     // Initialize the board
     Piece (*board)[BOARD_SIZE] = initBoard();
+    // Allocate memory for the valid moves lookup table
+     validMovesLookup = malloc(sizeof(Position*) * BOARD_SIZE * BOARD_SIZE);
     // Print the board (for debugging purposes)
     // printBoard();
 
@@ -205,9 +215,20 @@ int main(int argc, char* argv[]) {
         // Handle events
         // Exit if the ESC key is pressed
         if (turnStart) {
+            int colour = turnCounter % 2;
             printf("Turn %d: %c to move.\n", turnCounter, turnCounter % 2 == 0 ? 'b' : 'w');
-            if (turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved) {
+            if (colour == 0 ? whiteKingMoved : blackKingMoved) {
                 printf("King has moved!\n");
+            }
+            // Compute all valid moves
+            computeAllValidMoves(board, validMovesLookup, colour, enPassant, 
+            colour == 0 ? blackKingMoved : whiteKingMoved, colour == 0 ? whiteRookMoved : blackRookMoved,
+             colour == 0 ? blackKingPos : whiteKingPos);
+
+            //  Print the valid moves
+            if (isCheckmate(validMovesLookup)) {
+                printf("Checkmate!\n");
+                // running = 0;
             }
             turnStart = 0;
         }
@@ -217,6 +238,7 @@ int main(int argc, char* argv[]) {
         while (SDL_PollEvent(&event)) {
             running = (event.type == SDL_QUIT || 
             (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)) ? 0 : running;
+
             if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
                 // Get the square the mouse is clicking on
                 int x, y;
@@ -225,12 +247,12 @@ int main(int argc, char* argv[]) {
                 int col = x / SQUARE_SIZE;
                 // Check if the mouse is clicking on a non-empty square
                 if (board[row][col].type != EMPTY && turnCounter % 2 == board[row][col].color) {
-                    // printf("Mouse is clicking on piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
                     int kingMoved = turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved;
                     int* rookMoved = turnCounter % 2 == 0 ? whiteRookMoved : blackRookMoved;
-                    validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
+                    // Get valid moves from the lookup table
+                    validMoves = validMovesLookup[row * BOARD_SIZE + col];
                     // Set the selected piece
                     selectedPiece = &board[row][col];
                     selectedX = col;
@@ -238,24 +260,26 @@ int main(int argc, char* argv[]) {
                     isDragging = 1;
                 }
             } 
-            // else {
+
             if (event.type == SDL_MOUSEMOTION) {
                 SDL_GetMouseState(&mouseX, &mouseY);
                 int row = mouseY / SQUARE_SIZE;
                 int col = mouseX / SQUARE_SIZE;
                 // Check if the mouse is hovering over a non-empty square
+                if (isDragging) {
+                    // Render the piece at the mouse position
+                }
                 if (board[row][col].type != EMPTY && turnCounter % 2 == board[row][col].color && !isDragging) {
-                    // printf("Mouse is hovering over piece %c at %d, %d\n", pieceToChar(board[row][col]), col, row);
                     // Compute the valid moves for the piece
                     Position pos = {row, col};
                     int kingMoved = turnCounter % 2 == 0 ? whiteKingMoved : blackKingMoved;
                     int* rookMoved = turnCounter % 2 == 0 ? whiteRookMoved : blackRookMoved;
-                    validMoves = computeValidMoves(pos, board[row][col], board, enPassant, kingMoved, rookMoved);
+                    // Get valid moves from the lookup table
+                    validMoves = validMovesLookup[row * BOARD_SIZE + col];
                 } else if (!isDragging) {
                     validMoves = NULL;
                 }
             }
-            // }
 
             if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT && isDragging) {
                 // Handle mouse button up
@@ -276,23 +300,31 @@ int main(int argc, char* argv[]) {
         
         // Render the valid moves - loop through the array of valid moves and render a highlight on each square
         if (validMoves != NULL) {
+            int numValidMoves = 0;
             for (int i = 0; i < 28; ++i) {
                 if (validMoves[i].row == -1 && validMoves[i].col == -1) {
                     break;
                 }
                 renderHighlight(renderer, validMoves[i].col * SQUARE_SIZE, validMoves[i].row * SQUARE_SIZE);
+                numValidMoves++;
             }
         } else {
             // Remove the highlights if the mouse is not hovering over a piece
         }
-
+        Piece tempMousePiece;
         for (int row = 0; row < BOARD_SIZE; ++row) {
             for (int col = 0; col < BOARD_SIZE; ++col) {
                 Piece piece = board[row][col];
-                if (piece.type != EMPTY) {
+                if (piece.type != EMPTY && !(isDragging && row == selectedY && col == selectedX)) {
                     renderPiece(renderer, piece, col * SQUARE_SIZE, row * SQUARE_SIZE);
                 }
+                if (isDragging && row == selectedY && col == selectedX) {
+                    tempMousePiece = piece;
+                }
             }
+        }
+        if (isDragging) {
+            renderPieceAtMouse(renderer, tempMousePiece);
         }
 
 
