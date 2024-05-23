@@ -1,9 +1,16 @@
 // board.h
+#include <stdint.h>
 
 #ifndef BOARD_H
 #define BOARD_H
 
 #define BOARD_SIZE 8
+#define SQUARE_SIZE 50
+
+#define RIGHT_WRAP_MASK 0x7F7F7F7F7F7F7F7FULL;
+#define LEFT_WRAP_MASK 0xFEFEFEFEFEFEFEFEULL;
+#define UP_WRAP_MASK 0xFFFFFFFFFFFFFF00ULL;
+#define DOWN_WRAP_MASK 0x00FFFFFFFFFFFFFFULL;
 
 typedef enum {
     EMPTY, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
@@ -44,11 +51,43 @@ typedef struct {
 
 Piece board[BOARD_SIZE][BOARD_SIZE];
 
+// Square encoding
+enum {
+    a8, b8, c8, d8, e8, f8, g8, h8,
+    a7, b7, c7, d7, e7, f7, g7, h7,
+    a6, b6, c6, d6, e6, f6, g6, h6,
+    a5, b5, c5, d5, e5, f5, g5, h5,
+    a4, b4, c4, d4, e4, f4, g4, h4,
+    a3, b3, c3, d3, e3, f3, g3, h3,
+    a2, b2, c2, d2, e2, f2, g2, h2,
+    a1, b1, c1, d1, e1, f1, g1, h1
+};
+
+// Defines the bitboards for each piece type and color
+// 0th index is the global bitboard for all pieces
+// 1-6 are the bitboards for white pieces
+// 7-12 are the bitboards for black pieces
+// 13 is the global bitboard for all white pieces
+// 14 is the global bitboard for all black pieces
+// Ensure that the global bitboards are updated after each move to avoid desync
+extern uint64_t bitboards[15];
+extern uint64_t attackBitboards[15];
+extern uint64_t pawnAttackLookup[2][64];
+extern uint64_t knightAttackLookup[64];
+extern uint64_t* rookAttackLookup[64];
+extern uint64_t* bishopAttackLookup[64];
+extern uint64_t* queenAttackLookup[64];
+extern uint64_t kingAttackLookup[64];
+
 int isValidAndEmpty(Position pos);
 PieceType getType(Position pos);
 PieceColor getColor(Position pos);
+// Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE];
 Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE];
-char pieceToChar(Piece piece);
 void printBoard();
+char* getPieceSprite(PieceType type, PieceColor color);
+void verticalFlip(uint64_t* bitboard);
+void prettyPrintBitboard(uint64_t bitboard);
+int rowColToIndex(int row, int col);
 
 #endif // BOARD_H

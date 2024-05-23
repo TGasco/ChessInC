@@ -1,8 +1,8 @@
 CC = gcc
-CFLAGS = -O3 -std=c99 -g
-LDFLAGS = -L/opt/homebrew/Cellar/sdl2/2.28.2/lib -L/opt/homebrew/Cellar/sdl2_ttf/2.20.2/lib -L/opt/homebrew/Cellar/sdl2_image/2.6.3_2/lib
+CFLAGS = -std=c99 -g
+LDFLAGS = -L/opt/homebrew/Cellar/sdl2/2.30.3/lib -L/opt/homebrew/Cellar/sdl2_ttf/2.20.2/lib -L/opt/homebrew/Cellar/sdl2_image/2.8.2_1/lib
 LIBS = -lSDL2 -lSDL2_ttf -lSDL2_image
-INCLUDES = -I/opt/homebrew/Cellar/sdl2/2.28.2/include/SDL2 -I/opt/homebrew/Cellar/sdl2_ttf/2.20.2/include/SDL2 -I/opt/homebrew/Cellar/sdl2_image/2.6.3_2/include/SDL2
+INCLUDES = -I/opt/homebrew/Cellar/sdl2/2.30.3/include/SDL2 -I/opt/homebrew/Cellar/sdl2_ttf/2.20.2/include/SDL2 -I/opt/homebrew/Cellar/sdl2_image/2.8.2_1/include/SDL2
 SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
