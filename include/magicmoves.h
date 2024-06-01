@@ -8,11 +8,18 @@
 #define SETBIT(bitboard, square) ((bitboard) |= (1ULL << (square)))
 #define POPBIT(bitboard, square) (GETBIT(bitboard, square) ? (bitboard ^= (1ULL << square)) : 0)
 
-U64 findMagic(int square, int relevantBits, int isBishop);
-void initMagics();
+// U64 findMagic(int square, int relevantBits, int isBishop);
+// void initMagics();
+// void initSliderAttacks(int isBishop);
+// U64 getBishopAttacks(int square, U64 occupancy);
+// U64 getRookAttacks(int square, U64 occupancy);
+void init_magics();
 void initSliderAttacks(int isBishop);
 U64 getBishopAttacks(int square, U64 occupancy);
 U64 getRookAttacks(int square, U64 occupancy);
 enum { rook, bishop };
+
+extern const U64 bishopMagics[64];
+extern const U64 rookMagics[64];
 
 #endif

@@ -79,15 +79,25 @@ extern uint64_t* bishopAttackLookup[64];
 extern uint64_t* queenAttackLookup[64];
 extern uint64_t kingAttackLookup[64];
 
-int isValidAndEmpty(Position pos);
+extern uint64_t enPassantMask; // Mask tracking the en passant square
+extern uint64_t promotionMask[2]; // Mask tracking the promotion squares
+extern uint64_t kingSideCastleMask[2]; // Mask tracking the king side castling squares
+extern uint64_t queenSideCastleMask[2]; // Mask tracking the queen side castling squares
+extern uint8_t castleRights; // Bitmask tracking the castling rights§
+
+#define WHITE_KINGSIDE  0x1
+#define WHITE_QUEENSIDE 0x2
+#define BLACK_KINGSIDE  0x4
+#define BLACK_QUEENSIDE 0x8
+
 PieceType getType(Position pos);
 PieceColor getColor(Position pos);
-// Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE];
 Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE];
 void printBoard();
 char* getPieceSprite(PieceType type, PieceColor color);
 void verticalFlip(uint64_t* bitboard);
 void prettyPrintBitboard(uint64_t bitboard);
-int rowColToIndex(int row, int col);
+int getBoardAtIndex(int index, int colour);
+Piece getPieceAtSquare(int square);
 
 #endif // BOARD_H

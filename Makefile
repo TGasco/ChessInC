@@ -27,3 +27,5 @@ clean:
 
 clean-objects:
 	rm -rf $(OBJ_DIR)
+
+debug: CFLAGS += -DDEBUG

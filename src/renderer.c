@@ -51,45 +51,8 @@ void renderHighlight(SDL_Renderer* renderer, int x, int y) {
     SDL_RenderFillRect(renderer, &highlightRect);
 }
 
-// DEPRECATED FUNCTION - Bitboards are now used instead of the 2D array of pieces
-// void renderFrame(SDL_Renderer** renderer, Piece board[BOARD_SIZE][BOARD_SIZE], int selectedX, int selectedY, int isDragging, Position* validMoves) {
-//     // Render the chess board
-//     renderBoard(*renderer);
-    
-//     // Render the valid moves - loop through the array of valid moves and render a highlight on each square
-//     if (validMoves != NULL) {
-//         int numValidMoves = 0;
-//         for (int i = 0; i < 28; ++i) {
-//             if (validMoves[i].row == -1 && validMoves[i].col == -1) {
-//                 break;
-//             }
-//             renderHighlight(*renderer, validMoves[i].col * SQUARE_SIZE, validMoves[i].row * SQUARE_SIZE);
-//             numValidMoves++;
-//         }
-//     } else {
-//         // Remove the highlights if the mouse is not hovering over a piece
-//     }
-//     Piece tempMousePiece;
-//     for (int row = 0; row < BOARD_SIZE; ++row) {
-//         for (int col = 0; col < BOARD_SIZE; ++col) {
-//             Piece piece = board[row][col];
-//             if (piece.type != EMPTY && !(isDragging && row == selectedY && col == selectedX)) {
-//                 renderPiece(*renderer, piece, col * SQUARE_SIZE, row * SQUARE_SIZE);
-//             }
-//             if (isDragging && row == selectedY && col == selectedX) {
-//                 tempMousePiece = piece;
-//             }
-//         }
-//     }
-//     if (isDragging) {
-//         renderPieceAtMouse(*renderer, tempMousePiece);
-//     }
-
-
-//     SDL_RenderPresent(*renderer);
-// }
-
-void renderFrame(SDL_Renderer** renderer, Piece board[BOARD_SIZE][BOARD_SIZE], int selectedX, int selectedY, int isDragging, Position* validMoves) {
+// New renderFrame uses bitboards directly, no need to pass the board array
+void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, Position* validMoves) {
     // Render the chess board
     renderBoard(*renderer);
     // Render the valid moves - loop through the array of valid moves and render a highlight on each square
@@ -104,11 +67,16 @@ void renderFrame(SDL_Renderer** renderer, Piece board[BOARD_SIZE][BOARD_SIZE], i
         }
     }
 
-    for (int i=0; i<BOARD_SIZE*BOARD_SIZE; i++) {
-        if (bitboards[0] & (1ULL << i)) {
-            int row = i / 8;
-            int col = i % 8;
-            Piece piece = board[row][col];
+    // Iterate over bitboards and render the pieces
+    for (int pieceType = 1; pieceType < 13; pieceType++)
+    {
+        Piece piece = {pieceType % 6, pieceType < 7 ? WHITE : BLACK, pieceSprites[pieceType - 1]};
+        uint64_t bitboard = bitboards[pieceType];
+        while (bitboard) {
+            int square = __builtin_ctzll(bitboard);
+            bitboard &= bitboard - 1;
+            int row = square / BOARD_SIZE;
+            int col = square % BOARD_SIZE;
             if (!(isDragging && row == selectedY && col == selectedX)) {
                 renderPiece(*renderer, piece, col * SQUARE_SIZE, row * SQUARE_SIZE);
             }
@@ -117,7 +85,6 @@ void renderFrame(SDL_Renderer** renderer, Piece board[BOARD_SIZE][BOARD_SIZE], i
             }
         }
     }
-
     SDL_RenderPresent(*renderer);
 }
 

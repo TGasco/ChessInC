@@ -13,6 +13,17 @@ uint64_t* bishopAttackLookup[64];
 uint64_t* queenAttackLookup[64];
 uint64_t kingAttackLookup[64];
 
+uint64_t enPassantMask;
+
+// define the castling masks (castling moves for king and queenside, for white and black)
+// Set bits show all square the King/Rook must move through to castle
+uint64_t kingSideCastleMask[2] = {0x6000000000000000, 0x0000000000000060};
+uint64_t queenSideCastleMask[2] = {0x0E00000000000000, 0x000000000000000E};
+uint8_t castleRights = WHITE_KINGSIDE | WHITE_QUEENSIDE | BLACK_KINGSIDE | BLACK_QUEENSIDE;
+
+uint64_t promotionMask[2] = {0x00000000000000FF, 0xFF00000000000000};
+
+
 PieceType getType(Position pos) {
     return board[pos.row][pos.col].type;
 }
@@ -24,30 +35,6 @@ PieceColor getColor(Position pos) {
 char* getPieceSprite(PieceType type, PieceColor color) {
     return pieceSprites[(int)(type) - 1 + color * 6];
 }
-
-// Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE] {
-//     // Initialize the back rank for both white and black pieces
-//     PieceType backRank[] = {ROOK, KNIGHT, BISHOP, QUEEN, KING, BISHOP, KNIGHT, ROOK};
-//     for (int col = 0; col < BOARD_SIZE; col++) {
-//         board[0][col] = (Piece){backRank[col], WHITE, pieceSprites[(int)(backRank[col]) - 1]};
-//         board[7][col] = (Piece){backRank[col], BLACK, pieceSprites[((int)(backRank[col])) + 5]};
-//     }
-
-//     // Initialize the front rank for both white and black pawns
-//     for (int col = 0; col < BOARD_SIZE; col++) {
-//         board[1][col] = (Piece){PAWN, WHITE, pieceSprites[0]};
-//         board[6][col] = (Piece){PAWN, BLACK, pieceSprites[6]};
-//     }
-
-//     // Initialize the rest of the board with empty squares
-//     for (int row = 2; row < 6; row++) {
-//         for (int col = 0; col < BOARD_SIZE; col++) {
-//             board[row][col] = (Piece){EMPTY, WHITE, NULL};
-//         }
-//     }
-
-//     return &board;
-// }
 
 Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE] {
     for(int i=0; i<12; i++) {
@@ -87,4 +74,29 @@ void prettyPrintBitboard(uint64_t bitboard) {
 void verticalFlip(uint64_t* bitboard) {
     // Flip the bitboard vertically about the center ranks
     *bitboard = __builtin_bswap64(*bitboard);
+}
+
+int getBoardAtIndex(int index, int colour) {
+    // Returns the index for the bitboard containing the piece at the given index
+    // printf("Searching for piece at index %d\n", index);
+    // prettyPrintBitboard(bitboards[colour ? 14 : 13]);
+    for (int i=1; i<7; i++) {
+        int pieceIDx = i + ((colour) * 6);
+        if (bitboards[pieceIDx] & (1ULL << index)) {
+            return pieceIDx;
+        }
+    }
+    // Return 0 if no piece is found
+    printf("WARN: No piece found at index %d\n", index);
+    return -1;
+}
+
+Piece getPieceAtSquare(int square) {
+    // Returns the piece at the given square
+    int colour = 0;
+    if (bitboards[14] & (1ULL << square)) {
+        colour = 1;
+    }
+    int pieceIDx = getBoardAtIndex(square, colour);
+    return (Piece){(pieceIDx - (colour * 6)) , colour, getPieceSprite(pieceIDx - (colour * 6), colour)};
 }

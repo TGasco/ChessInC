@@ -66,6 +66,8 @@ char colToFile(int col) {
             return 'g';
         case 7:
             return 'h';
+        default:
+            return '?';
     }
     return '?';
 }
@@ -88,10 +90,31 @@ void moveToNotation(Piece piece, Position posFrom, Position posTo, int capture) 
     printf("%s%c%d\n", notation, colToFile(posTo.col), 8 - posTo.row);
 }
 
+void printValidMoves(uint64_t validMoves) {
+    // Print the valid moves to the console
+    printf("Valid moves: ");
+    for (int idx = 0; idx < BOARD_SIZE * BOARD_SIZE; idx++) {
+        if (validMoves & (1ULL << idx)) {
+            printf("%c%d, ", colToFile(idx % BOARD_SIZE), 8 - (idx / BOARD_SIZE));
+        }
+    }
+    printf("\n");
+}
+
 
 int squareToBitIndex(const char* square) {
     // Convert the given square to a bit index
     int file = square[0] - 'a';
     int rank= 8 - (square[1] - '0');
     return rank * 8 + file;
+}
+
+int posToSquare(Position pos) {
+    // Convert the given position to a square index
+    return pos.row * BOARD_SIZE + pos.col;
+}
+
+Position squareToPos(int square) {
+    // Convert the given square index to a position
+    return (Position){square / BOARD_SIZE, square % BOARD_SIZE};
 }
