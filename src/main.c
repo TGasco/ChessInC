@@ -9,6 +9,7 @@
 #include "../include/renderer.h"
 #include "../include/helperMethods.h"
 #include "../include/movegen.h"
+#include "../include/evaluate.h"
 
 // Global running time variables
 int running = 1;
@@ -21,12 +22,15 @@ int mouseY = 0;
 int isDragging = 0;
 int turnStart = 1;
 uint64_t* validMoves;
+int playerColour = WHITE;
 
 int canCastleKingside[2] = {1, 1};
 int canCastleQueenside[2] = {1, 1};
 // Renderer variables
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
+
+void endTurn();
 
 int main(int argc, char* argv[]) {
     // Allocate memory for the valid moves lookup table
@@ -38,6 +42,7 @@ int main(int argc, char* argv[]) {
     char* fenPtr = fen;
     parseFENToBitboard(fenPtr);
 
+    initBoardState();
     // Initialise lookup tables
     initLookups();
 
@@ -57,7 +62,22 @@ int main(int argc, char* argv[]) {
 
             getPseudoValidMoves(colour, validMoves);
             validateMoves(colour, validMoves);
-            updateBitboards();
+            // updateBitboards();
+            prettyPrintBitboard(bitboards[0]);
+            printf("\n");
+
+            // run minimax algorithm if it's the AI's turn
+            if (colour == !playerColour) {
+                Move bestMove = findBestMove(3, BLACK, validMoves);
+                printf("Best move: %c%d to %c%d\n", colToFile(bestMove.from % 8), 8 - bestMove.from / 8, colToFile(bestMove.to % 8), 8 - bestMove.to / 8);
+                makeMove((Piece){getPieceAtSquare(bestMove.from).type, colour}, bestMove.from, bestMove.to, validMoves, 0);
+                turnStart = 1;
+                selectedPiece = NULL;
+                selectedX = -1;
+                selectedY = -1;
+                validPositions = NULL;
+                // endTurn();
+            }
 
             if (isCheck(colour)) {
                 printf("Check!\n");
@@ -67,7 +87,7 @@ int main(int argc, char* argv[]) {
                     running = 0;
                 }
             }
-            turnStart = 0;
+            if (playerColour == colour) turnStart = 0;
         }
 
         SDL_Event event;
@@ -121,14 +141,20 @@ int main(int argc, char* argv[]) {
 
                 int squareFrom = selectedY * BOARD_SIZE + selectedX;
                 int squareTo = releaseY * BOARD_SIZE + releaseX;
-
-                int success = makeMove(*selectedPiece, squareFrom, squareTo, validMoves, 0);
-                if (success) {
-                    turnStart = 1;
-                    selectedPiece = NULL;
-                    selectedX = -1;
-                    selectedY = -1;
-                    validPositions = NULL;
+                Move move = {*selectedPiece, squareFrom, squareTo};
+                if (isMoveValid(move, validMoves)) {
+                    printf("Move is valid!\n");
+                    int success = makeMove(*selectedPiece, squareFrom, squareTo, validMoves, 0);
+                    if (success) {
+                        // endTurn();
+                        turnStart = 1;
+                        selectedPiece = NULL;
+                        selectedX = -1;
+                        selectedY = -1;
+                        validPositions = NULL;
+                    }
+                } else {
+                    printf("Move is invalid!\n");
                 }
             }
         }
@@ -142,4 +168,12 @@ int main(int argc, char* argv[]) {
     // Free lookup tables
     free(validMoves);
     return 0;
+}
+
+void endTurn() {
+    turnStart = 1;
+    selectedPiece = NULL;
+    selectedX = -1;
+    selectedY = -1;
+    validMoves = NULL;
 }

@@ -12,6 +12,7 @@
 // The functions are called by the movePiece() function in board.c.
 
 // Declare functions
+void updateBitboards();
 void computeColourBitboard(int colour);
 char colToFile(int col);
 int getBitboardIndex(int pieceType, int colour);
@@ -62,6 +63,7 @@ void validateMoves(int colour, uint64_t* validMoves) {
             bitboard &= ~(1ULL << pos);
         }
     }
+    updateBitboards();
 }
 
 uint64_t coordToBitboard(int row, int col) {
@@ -179,28 +181,25 @@ int getBitboardIndex(int pieceType, int colour) {
     return pieceType + (colour * 6);
 }
 
+int isMoveValid(Move move, uint64_t* validMoves) {
+    // Check if the move is valid
+    return validMoves[move.from] & (1ULL << move.to) ? 1 : 0;
+}
+
 int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves, int simulate) {
     uint64_t destBitboard = 1ULL << squareTo;
     int bitboardIndex = getBitboardIndex(selectedPiece.type, selectedPiece.color);
 
-    // Check if the move is valid
-    if (!(validMoves[squareFrom] & destBitboard)) {
-        // printf("Invalid move!\n");
-        return 0;
-    }
-
     // Simulate the move to ensure that the king is not in check
     // Make a copy of the board state
-    uint64_t tempBitboards[15];
-    uint64_t tempAttackBitboards[15];
-    memcpy(tempBitboards, bitboards, sizeof(bitboards));
-    memcpy(tempAttackBitboards, attackBitboards, sizeof(attackBitboards));
-
-    // Make the move
-
+    // uint64_t tempBitboards[15];
+    // uint64_t tempAttackBitboards[15];
+    // memcpy(tempBitboards, bitboards, sizeof(bitboards));
+    // memcpy(tempAttackBitboards, attackBitboards, sizeof(attackBitboards));
+    saveBoardState();
 
     // Remove the piece from the source square
-    bitboards[bitboardIndex] &= ~(1ULL << squareFrom);
+    currentState.bitboards[bitboardIndex] &= ~(1ULL << squareFrom);
 
     // Handle Pawn promotion (if applicable)
     if (selectedPiece.type == PAWN && (destBitboard & promotionMask[selectedPiece.color]) != 0ULL) {
@@ -209,42 +208,36 @@ int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validM
     }
 
     // Move the piece to the destination square
-    bitboards[bitboardIndex] |= (1ULL << squareTo);
+    currentState.bitboards[bitboardIndex] |= (1ULL << squareTo);
     // Check if the move is a capture
     int capture = isCapture(destBitboard, selectedPiece.color, selectedPiece.type);
     if (capture) {
-        printf("Capture!\n");
+        // printf("Capture!\n");
         // Get the piece at the destination
         if (selectedPiece.type == PAWN && ((1ULL << squareTo) & enPassantMask) != 0ULL) {
-            removePiece(&bitboards[1 + (!(selectedPiece.color) * 6)], (1ULL << (squareTo + (selectedPiece.color ? -8 : 8))));
+            removePiece(&currentState.bitboards[1 + (!(selectedPiece.color) * 6)], (1ULL << (squareTo + (selectedPiece.color ? -8 : 8))));
         } else {
-            removePiece(&bitboards[getBoardAtIndex(squareTo, !selectedPiece.color)], destBitboard);
+            removePiece(&currentState.bitboards[getBoardAtIndex(squareTo, !selectedPiece.color)], destBitboard);
         }
     }
 
     // Update the bitboards to reflect the move
     updateBitboards();
-    // Recompute attack bitboards for the opposite colour
-    getPseudoValidMoves(!selectedPiece.color, validMoves);
-    // Update the bitboards to reflect the attacks 
-    updateBitboards();
 
-    // Check if the move puts the king in check
-    if (isCheck(selectedPiece.color)) {
-        printf("Move puts king in check!\n");
-        // If the move puts the king in check, then restore the board state and return 0
-        memcpy(bitboards, tempBitboards, sizeof(bitboards));
-        memcpy(attackBitboards, tempAttackBitboards, sizeof(attackBitboards));
-        return 0;
-    }
-
-    // Undo the move if it is a simulation
     if (simulate) {
-        memcpy(bitboards, tempBitboards, sizeof(bitboards));
-        memcpy(attackBitboards, tempAttackBitboards, sizeof(attackBitboards));
-        return 1;
-    }
+        // Recompute attack bitboards for the opposite colour
+        getPseudoValidMoves(!selectedPiece.color, validMoves);
+        // Update the bitboards to reflect the attacks 
+        updateBitboards();
+        int check = isCheck(selectedPiece.color);
 
+        // Undo the move
+        // memcpy(bitboards, tempBitboards, sizeof(bitboards));
+        // memcpy(attackBitboards, tempAttackBitboards, sizeof(attackBitboards));
+        // restoreBoardState(&currentState);
+        restoreBoardState();
+        return !check;
+    }
 
     // Set the en passant square (if applicable)
     if (selectedPiece.type == PAWN && abs(squareFrom - squareTo) == 16) {
@@ -260,8 +253,8 @@ int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validM
             int rookSquareFrom = squareFrom + (squareTo - squareFrom > 0 ? 3 : -4);
             int rookSquareTo = squareFrom + (squareTo - squareFrom > 0 ? 1 : -1);
             // Move the rook
-            bitboards[getBitboardIndex(ROOK, selectedPiece.color)] &= ~(1ULL << rookSquareFrom);
-            bitboards[getBitboardIndex(ROOK, selectedPiece.color)] |= (1ULL << rookSquareTo);
+            currentState.bitboards[getBitboardIndex(ROOK, selectedPiece.color)] &= ~(1ULL << rookSquareFrom);
+            currentState.bitboards[getBitboardIndex(ROOK, selectedPiece.color)] |= (1ULL << rookSquareTo);
         }
 
         // Redact the castling rights
@@ -279,7 +272,7 @@ int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validM
     }
 
 
-    moveToNotation(selectedPiece, squareToPos(squareFrom), squareToPos(squareTo), capture);
+    // moveToNotation(selectedPiece, squareToPos(squareFrom), squareToPos(squareTo), capture);
     // Recompute attack bitboards
     getPseudoValidMoves(selectedPiece.color, validMoves);
     // updateAttackBitboards(selectedPiece.color);

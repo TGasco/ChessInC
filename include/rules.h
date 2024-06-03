@@ -17,4 +17,5 @@ void promotePiece(uint64_t bit, int pieceType, int colour);
 // int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves);
 int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves, int simulate);
 void validateMoves(int colour, uint64_t* validMoves);
+int isMoveValid(Move move, uint64_t* validMoves);
 #endif

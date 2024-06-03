@@ -4,8 +4,8 @@
 #define BOARD_SIZE 8
 
 Piece board[BOARD_SIZE][BOARD_SIZE];
-uint64_t bitboards[15];
-uint64_t attackBitboards[15];
+// uint64_t bitboards[15];
+// uint64_t attackBitboards[15];
 uint64_t pawnAttackLookup[2][64];
 uint64_t knightAttackLookup[64];
 uint64_t* rookAttackLookup[64];
@@ -13,16 +13,28 @@ uint64_t* bishopAttackLookup[64];
 uint64_t* queenAttackLookup[64];
 uint64_t kingAttackLookup[64];
 
-uint64_t enPassantMask;
+// uint64_t enPassantMask;
+
 
 // define the castling masks (castling moves for king and queenside, for white and black)
 // Set bits show all square the King/Rook must move through to castle
 uint64_t kingSideCastleMask[2] = {0x6000000000000000, 0x0000000000000060};
 uint64_t queenSideCastleMask[2] = {0x0E00000000000000, 0x000000000000000E};
-uint8_t castleRights = WHITE_KINGSIDE | WHITE_QUEENSIDE | BLACK_KINGSIDE | BLACK_QUEENSIDE;
+// uint8_t castleRights = WHITE_KINGSIDE | WHITE_QUEENSIDE | BLACK_KINGSIDE | BLACK_QUEENSIDE;
 
 uint64_t promotionMask[2] = {0x00000000000000FF, 0xFF00000000000000};
 
+BoardState currentState;
+
+BoardState prevState;
+
+void saveBoardState() {
+    prevState = currentState;
+}
+
+void restoreBoardState() {
+    currentState = prevState;
+}
 
 PieceType getType(Position pos) {
     return board[pos.row][pos.col].type;
@@ -41,7 +53,7 @@ Piece (*initBoard())[BOARD_SIZE][BOARD_SIZE] {
         for (int j=0; j<BOARD_SIZE*BOARD_SIZE; j++) {
             int row = j / 8;
             int col = j % 8;
-            if (bitboards[i+1] & (1ULL << j)) {
+            if (currentState.bitboards[i+1] & (1ULL << j)) {
                 board[row][col] = (Piece){(i%6)+1, i < 6 ? WHITE : BLACK, getPieceSprite((i%6)+1, i < 6 ? WHITE : BLACK)};
             }
         }

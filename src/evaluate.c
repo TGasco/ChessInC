@@ -1,106 +1,204 @@
-// #include <limits.h>
-// #include <stdbool.h>
+#include <board.h>
+#include <evaluate.h>
+#include <movegen.h>
+#include <rules.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
-// #define INFINITY INT_MAX
+#define INFINITY INT_MAX
+struct PieceValues pieceValues = {
+    .values = {100, 320, 330, 500, 900, 200000}
+};
 
-// int evaluate_board(); // Forward declaration of the evaluation function
-// void make_move(Move move); // Function to make a move
-// void undo_move(Move move); // Function to undo a move
-// bool game_over(); // Function to check if the game is over
-// Move* generate_moves(bool maximizingPlayer, int* move_count); // Function to generate all possible moves for the current player
+int evaluateMaterial(uint64_t* bitboards);
+int max(int a, int b);
+int min(int a, int b);
 
-// int minimax(int depth, int alpha, int beta, bool maximizingPlayer) {
-//     if (depth == 0 || game_over()) {
-//         return evaluate_board();
-//     }
+int minimax(int depth, int alpha, int beta, int color) {
+    if (depth == 0 || isCheckmate(color) || isCheckmate(!color)) {
+        int eval = evaluateMaterial(bitboards);
+        // printf("Depth: %d, Eval: %d\n", depth, eval);
+        return eval;
+    }
 
-//     if (maximizingPlayer) {
-//         int maxEval = -INFINITY;
-//         int move_count;
-//         Move* moves = generate_moves(true, &move_count);
-//         for (int i = 0; i < move_count; i++) {
-//             make_move(moves[i]);
-//             int eval = minimax(depth - 1, alpha, beta, false);
-//             undo_move(moves[i]);
-//             maxEval = max(maxEval, eval);
-//             alpha = max(alpha, eval);
-//             if (beta <= alpha) {
-//                 break; // beta cut-off
-//             }
-//         }
-//         free(moves); // Assuming moves were dynamically allocated
-//         return maxEval;
-//     } else {
-//         int minEval = INFINITY;
-//         int move_count;
-//         Move* moves = generate_moves(false, &move_count);
-//         for (int i = 0; i < move_count; i++) {
-//             make_move(moves[i]);
-//             int eval = minimax(depth - 1, alpha, beta, true);
-//             undo_move(moves[i]);
-//             minEval = min(minEval, eval);
-//             beta = min(beta, eval);
-//             if (beta <= alpha) {
-//                 break; // alpha cut-off
-//             }
-//         }
-//         free(moves); // Assuming moves were dynamically allocated
-//         return minEval;
-//     }
-// }
+    int breakFlag = 0;
+    uint64_t* moves = malloc(sizeof(uint64_t) * BOARD_SIZE * BOARD_SIZE);
 
-// // Example max and min functions
-// int max(int a, int b) {
-//     return (a > b) ? a : b;
-// }
+    uint64_t bitboardsCopy[15];
+    uint64_t attackBitboardsCopy[15];
+    uint8_t castleRightsCopy = castleRights;
+    uint64_t enPassantMaskCopy = enPassantMask;
 
-// int min(int a, int b) {
-//     return (a < b) ? a : b;
-// }
+    uint64_t bitboardsSubCopy[15];
+    uint64_t attackBitboardsSubCopy[15];
+    uint8_t castleRightsSubCopy = castleRights;
+    uint64_t enPassantMaskSubCopy = enPassantMask;
+    // Save the current state of the board
+    memcpy(bitboardsCopy, bitboards, sizeof(bitboards));
+    memcpy(attackBitboardsCopy, attackBitboards, sizeof(attackBitboards));
+    castleRightsCopy = castleRights;
+    enPassantMaskCopy = enPassantMask;
 
-// int evaluate_board() {
-//     int score = 0;
+    getPseudoValidMoves(color, moves);
+    validateMoves(color, moves);
 
-//     // Assuming you have bitboards for each piece type and color
-//     // Example: bitboard for white pawns, black pawns, etc.
-//     score += __builtin_popcountll(white_pawns) * 1;
-//     score -= __builtin_popcountll(black_pawns) * 1;
+    int bestValue = color == WHITE ? -INFINITY : INFINITY;
 
-//     score += __builtin_popcountll(white_knights) * 3;
-//     score -= __builtin_popcountll(black_knights) * 3;
+    for (int pieceType = 1; pieceType < 7; pieceType++) {
+        if (breakFlag) {
+            break;
+        }
+        int bitboardIndex = getBitboardIndex(pieceType, color);
+        uint64_t bitboard = bitboards[bitboardIndex];
+        while (bitboard && !breakFlag) {
+            int squareFrom = __builtin_ctzll(bitboard);
+            uint64_t pieceMoves = moves[squareFrom];
 
-//     score += __builtin_popcountll(white_bishops) * 3;
-//     score -= __builtin_popcountll(black_bishops) * 3;
+            while (pieceMoves && !breakFlag) {
+                int squareTo = __builtin_ctzll(pieceMoves);
+                // Save the current state of the board
+                memcpy(bitboardsSubCopy, bitboards, sizeof(bitboards));
+                memcpy(attackBitboardsSubCopy, attackBitboards, sizeof(attackBitboards));
+                castleRightsSubCopy = castleRights;
+                enPassantMaskSubCopy = enPassantMask;
+                makeMove((Piece){pieceType, color}, squareFrom, squareTo, moves, 0);
 
-//     score += __builtin_popcountll(white_rooks) * 5;
-//     score -= __builtin_popcountll(black_rooks) * 5;
+                int score = minimax(depth - 1, alpha, beta, color);
 
-//     score += __builtin_popcountll(white_queens) * 9;
-//     score -= __builtin_popcountll(black_queens) * 9;
+                // Restore the board state
+                memcpy(bitboards, bitboardsSubCopy, sizeof(bitboards));
+                memcpy(attackBitboards, attackBitboardsSubCopy, sizeof(attackBitboards));
+                castleRights = castleRightsSubCopy;
+                enPassantMask = enPassantMaskSubCopy;
+                // memcpy(bitboards, bitboardsCopy, sizeof(bitboards));
+                // memcpy(attackBitboards, attackBitboardsCopy, sizeof(attackBitboards));
+                // castleRights = castleRightsCopy;
+                // enPassantMask = enPassantMaskCopy;
 
-//     // No need to count kings for evaluation in a typical material evaluation function
-//     return score;
-// }
+                // White is maximizing player, black is minimizing player
+                if (color == WHITE) {
+                    bestValue = max(bestValue, score);
+                    alpha = max(alpha, score);
+                    if (beta <= alpha) {
+                        free(moves);
+                        breakFlag = 1;
+                        break; // beta cut-off
+                    }
+                } else {
+                    bestValue = min(bestValue, score);
+                    beta = min(beta, score);
+                    if (beta <= alpha) {
+                        free(moves);
+                        breakFlag = 1;
+                        break; // alpha cut-off
+                    }
+                }
+                pieceMoves &= ~(1ULL << squareTo);
+            }
+            bitboard &= ~(1ULL << squareFrom);
+        }
+    }
 
-// Move find_best_move(int depth, bool maximizingPlayer) {
-//     int bestValue = maximizingPlayer ? -INFINITY : INFINITY;
-//     Move bestMove;
-//     int move_count;
-//     Move* moves = generate_moves(maximizingPlayer, &move_count);
+    free(moves);
+    // Restore the board state
+    memcpy(bitboards, bitboardsCopy, sizeof(bitboards));
+    memcpy(attackBitboards, attackBitboardsCopy, sizeof(attackBitboards));
+    castleRights = castleRightsCopy;
+    enPassantMask = enPassantMaskCopy;
+    // printf("Returning alpha: %d at depth %d\n", alpha, depth);
+    // printf("Bitboard check:\n");
+    // prettyPrintBitboard(bitboards[0]);
+    return alpha;
+}
 
-//     for (int i = 0; i < move_count; i++) {
-//         make_move(moves[i]);
-//         int boardValue = minimax(depth - 1, -INFINITY, INFINITY, !maximizingPlayer);
-//         undo_move(moves[i]);
 
-//         if (maximizingPlayer && boardValue > bestValue) {
-//             bestValue = boardValue;
-//             bestMove = moves[i];
-//         } else if (!maximizingPlayer && boardValue < bestValue) {
-//             bestValue = boardValue;
-//             bestMove = moves[i];
-//         }
-//     }
-//     free(moves); // Assuming moves were dynamically allocated
-//     return bestMove;
-// }
+Move findBestMove(int depth, int color, uint64_t* moves) {
+    // uint64_t* moves = malloc(sizeof(uint64_t) * BOARD_SIZE * BOARD_SIZE);
+    uint64_t bitboardsCopy[15];
+    uint64_t attackBitboardsCopy[15];
+    uint8_t castleRightsCopy = castleRights;
+    uint64_t enPassantMaskCopy = enPassantMask;
+    // Save the current state of the board
+    memcpy(bitboardsCopy, bitboards, sizeof(bitboards));
+    memcpy(attackBitboardsCopy, attackBitboards, sizeof(attackBitboards));
+    castleRightsCopy = castleRights;
+    enPassantMaskCopy = enPassantMask;
+    printf("Bitboard check:\n");
+    prettyPrintBitboard(bitboards[0]);
+
+    // getPseudoValidMoves(color, moves);
+    // validateMoves(color, moves);
+
+    Move bestMove = {-1, -1};
+
+    int bestValue = color == WHITE ? -INFINITY : INFINITY;
+
+    for (int pieceType = 1; pieceType < 7; pieceType++) {
+        int bitboardIndex = getBitboardIndex(pieceType, color);
+        uint64_t bitboard = bitboards[bitboardIndex];
+        while (bitboard) {
+            int squareFrom = __builtin_ctzll(bitboard);
+            uint64_t pieceMoves = moves[squareFrom];
+
+            while (pieceMoves) {
+                int squareTo = __builtin_ctzll(pieceMoves);
+                makeMove((Piece){pieceType, color}, squareFrom, squareTo, moves, 0);
+
+                int score = minimax(depth - 1, -INFINITY, INFINITY, !color);
+
+                // Restore the board state
+                memcpy(bitboards, bitboardsCopy, sizeof(bitboards));
+                memcpy(attackBitboards, attackBitboardsCopy, sizeof(attackBitboards));
+                castleRights = castleRightsCopy;
+                enPassantMask = enPassantMaskCopy;
+
+                if (color == WHITE) {
+                    if (score > bestValue) {
+                        bestValue = score;
+                        bestMove = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
+                    }
+                } else {
+                    if (score < bestValue) {
+                        bestValue = score;
+                        bestMove = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
+                    }
+                }
+                pieceMoves &= ~(1ULL << squareTo);
+            }
+            bitboard &= ~(1ULL << squareFrom);
+        }
+    }
+    // free(moves);
+    // Restore the board state
+    memcpy(bitboards, bitboardsCopy, sizeof(bitboards));
+    memcpy(attackBitboards, attackBitboardsCopy, sizeof(attackBitboards));
+    castleRights = castleRightsCopy;
+    enPassantMask = enPassantMaskCopy;
+    return bestMove;
+}
+
+int max(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+int min(int a, int b) {
+    return (a < b) ? a : b;
+}
+
+
+int evaluateMaterial(uint64_t* bitboards) {
+    // Evaluate the material on the board
+    int score = 0;
+    for (int pieceType = 0; pieceType < 6; pieceType++) {
+        int whiteIndex = pieceType;
+        int blackIndex = pieceType + 6;
+
+        score += __builtin_popcountll(bitboards[whiteIndex]) * pieceValues.values[pieceType];
+        score -= __builtin_popcountll(bitboards[blackIndex]) * pieceValues.values[pieceType];
+    }
+
+    return score;
+}

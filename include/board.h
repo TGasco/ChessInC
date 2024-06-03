@@ -47,6 +47,19 @@ typedef struct {
     int col;
 } Position;
 
+typedef struct Move {
+    Piece piece;
+    int from;
+    int to;
+} Move;
+
+typedef struct {
+    uint64_t* bitboards;
+    uint64_t* attackBitboards;
+    uint64_t enPassantMask;
+    uint8_t castleRights;
+} BoardState;
+
 
 
 Piece board[BOARD_SIZE][BOARD_SIZE];
@@ -70,8 +83,8 @@ enum {
 // 13 is the global bitboard for all white pieces
 // 14 is the global bitboard for all black pieces
 // Ensure that the global bitboards are updated after each move to avoid desync
-extern uint64_t bitboards[15];
-extern uint64_t attackBitboards[15];
+// extern uint64_t bitboards[15];
+// extern uint64_t attackBitboards[15];
 extern uint64_t pawnAttackLookup[2][64];
 extern uint64_t knightAttackLookup[64];
 extern uint64_t* rookAttackLookup[64];
@@ -79,11 +92,14 @@ extern uint64_t* bishopAttackLookup[64];
 extern uint64_t* queenAttackLookup[64];
 extern uint64_t kingAttackLookup[64];
 
-extern uint64_t enPassantMask; // Mask tracking the en passant square
+// extern uint64_t enPassantMask; // Mask tracking the en passant square
 extern uint64_t promotionMask[2]; // Mask tracking the promotion squares
 extern uint64_t kingSideCastleMask[2]; // Mask tracking the king side castling squares
 extern uint64_t queenSideCastleMask[2]; // Mask tracking the queen side castling squares
-extern uint8_t castleRights; // Bitmask tracking the castling rights§
+// extern uint8_t castleRights; // Bitmask tracking the castling rights
+
+extern BoardState currentState;
+extern BoardState prevState;
 
 #define WHITE_KINGSIDE  0x1
 #define WHITE_QUEENSIDE 0x2
@@ -99,5 +115,8 @@ void verticalFlip(uint64_t* bitboard);
 void prettyPrintBitboard(uint64_t bitboard);
 int getBoardAtIndex(int index, int colour);
 Piece getPieceAtSquare(int square);
+void saveBoardState();
+void restoreBoardState();
+void initBoardState();
 
 #endif // BOARD_H
