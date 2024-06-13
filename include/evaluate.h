@@ -12,4 +12,6 @@ int minimax(int depth, int alpha, int beta, int color);
 // Move findBestMove(int depth, int color);
 Move findBestMove(int depth, int color, uint64_t* moves);
 
+void initPieceSqTables();
+
 #endif // EVALUATE_H

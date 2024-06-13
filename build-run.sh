@@ -8,4 +8,6 @@ make
 
 # Run the C executable
 echo "Running the C executable..."
-./bin/chess
+
+# Run the C executable with the given arguments
+./bin/chess "$@"

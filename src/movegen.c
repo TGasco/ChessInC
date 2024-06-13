@@ -65,11 +65,11 @@ uint64_t generatePawnMoveOTF(int square, bool colour) {
     uint64_t pawnLookup = pawnAttackLookup[colour][square];
 
     // Check if the pawn can move two steps
-    if (!canPawnMoveTwoSteps(bitboards[0], square, colour)) {
+    if (!canPawnMoveTwoSteps(currentState.bitboards[0], square, colour)) {
         // Remove the two-step move from the pawn lookup
         pawnLookup &= ~((1ULL << (square + (colour ? 16 : -16))));
     }
-    return ((pawnLookup & ~bitboards[0]) | (getPawnCaptureMask(1ULL << square, colour) & (bitboards[colour ? 13 : 14] | enPassantMask)));
+    return ((pawnLookup & ~currentState.bitboards[0]) | (getPawnCaptureMask(1ULL << square, colour) & (currentState.bitboards[colour ? 13 : 14] | currentState.enPassantMask)));
 }
 
 void initKnightLookup() {
@@ -146,13 +146,13 @@ void initLookups() {
 int canCastle(int color, int side) {
     switch(side) {
         case 0: // Kingside
-            if ((castleRights & (color ? BLACK_KINGSIDE : WHITE_KINGSIDE)) == 0) return 0;
+            if ((currentState.castleRights & (color ? BLACK_KINGSIDE : WHITE_KINGSIDE)) == 0) return 0;
             // Check if the squares between the king and rook are empty and not attacked
-            return ((kingSideCastleMask[color] & bitboards[0]) == 0) && (!isAttacked(kingSideCastleMask[color], color));
+            return ((kingSideCastleMask[color] & currentState.bitboards[0]) == 0) && (!isAttacked(kingSideCastleMask[color], color));
         case 1: // Queenside
-            if ((castleRights & (color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE)) == 0) return 0;
+            if ((currentState.castleRights & (color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE)) == 0) return 0;
             // Check if the squares between the king and rook are empty and not attacked
-            return ((queenSideCastleMask[color] & bitboards[0]) == 0) && (!isAttacked(queenSideCastleMask[color], color));
+            return ((queenSideCastleMask[color] & currentState.bitboards[0]) == 0) && (!isAttacked(queenSideCastleMask[color], color));
         default:
             return 0;
     }
@@ -170,13 +170,13 @@ uint64_t getPseudoValidMove(Piece piece, int square) {
             moves = knightAttackLookup[square];
             break;
         case BISHOP:
-            moves = getBishopAttacks(square, bitboards[0]);
+            moves = getBishopAttacks(square, currentState.bitboards[0]);
             break;
         case ROOK:
-            moves = getRookAttacks(square, bitboards[0]);
+            moves = getRookAttacks(square, currentState.bitboards[0]);
             break;
         case QUEEN:
-            moves = (getRookAttacks(square, bitboards[0]) | getBishopAttacks(square, bitboards[0]));
+            moves = (getRookAttacks(square, currentState.bitboards[0]) | getBishopAttacks(square, currentState.bitboards[0]));
             break;
         case KING:
             moves = kingAttackLookup[square]; // Get normal king moves
@@ -196,7 +196,7 @@ uint64_t getPseudoValidMove(Piece piece, int square) {
     }
 
     // Remove friendly fire
-    moves &= ~bitboards[piece.color ? 14 : 13];
+    moves &= ~currentState.bitboards[piece.color ? 14 : 13];
 
     return moves;
 }
@@ -204,8 +204,8 @@ uint64_t getPseudoValidMove(Piece piece, int square) {
 void getPseudoValidMoves(int colour, uint64_t* moves) {
     for (int pieceType=1; pieceType<7; pieceType++) {
         // reset the attack bitboard
-        attackBitboards[pieceType + (colour * 6)] = 0ULL;
-        uint64_t pieceBitboard = bitboards[pieceType + (colour * 6)];
+        currentState.attackBitboards[pieceType + (colour * 6)] = 0ULL;
+        uint64_t pieceBitboard = currentState.bitboards[pieceType + (colour * 6)];
         while (pieceBitboard) {
             int square = __builtin_ctzll(pieceBitboard);
             moves[square] = getPseudoValidMove((Piece){pieceType, colour}, square);
@@ -213,10 +213,10 @@ void getPseudoValidMoves(int colour, uint64_t* moves) {
             switch(pieceType) {
                 case PAWN:
                     // Remove forward moves from the attack bitboard
-                    attackBitboards[colour ? 13 : 14] |= getPawnCaptureMask(1ULL << square, colour);
+                    currentState.attackBitboards[pieceType + (colour * 6)] |= getPawnCaptureMask(1ULL << square, colour);
                     break;
                 default:
-                    attackBitboards[pieceType + (colour * 6)] |= moves[square];
+                    currentState.attackBitboards[pieceType + (colour * 6)] |= moves[square];
                     break;
             }
         }
@@ -232,7 +232,7 @@ void getPseudoValidMoves(int colour, uint64_t* moves) {
 // }
 
 bool isAttacked(uint64_t bitboard, int colour) {
-    if (attackBitboards[colour ? 13 : 14] & bitboard) {
+    if (currentState.attackBitboards[colour ? 13 : 14] & bitboard) {
         return true;
     } else {
         return false;

@@ -12,6 +12,9 @@
 #define UP_WRAP_MASK 0xFFFFFFFFFFFFFF00ULL;
 #define DOWN_WRAP_MASK 0x00FFFFFFFFFFFFFFULL;
 
+// Flips the bitboard vertically (used for black pieces)
+#define FLIP(sq) ((sq)^56)
+
 typedef enum {
     EMPTY, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
 } PieceType;
@@ -19,6 +22,12 @@ typedef enum {
 typedef enum {
     WHITE, BLACK
 } PieceColor;
+
+typedef enum {
+    GLOBAL, WHITE_PAWN, WHITE_KNIGHT, WHITE_BISHOP, WHITE_ROOK, WHITE_QUEEN, WHITE_KING,
+    BLACK_PAWN, BLACK_KNIGHT, BLACK_BISHOP, BLACK_ROOK, BLACK_QUEEN, BLACK_KING,
+    WHITE_GLOB, BLACK_GLOB
+} BitboardIndex;
 
 // Asset path for the piece sprites
 static const char* pieceSprites[] = {
@@ -51,11 +60,12 @@ typedef struct Move {
     Piece piece;
     int from;
     int to;
+    int score;
 } Move;
 
 typedef struct {
-    uint64_t* bitboards;
-    uint64_t* attackBitboards;
+    uint64_t bitboards[15];
+    uint64_t attackBitboards[15];
     uint64_t enPassantMask;
     uint8_t castleRights;
 } BoardState;
@@ -101,6 +111,13 @@ extern uint64_t queenSideCastleMask[2]; // Mask tracking the queen side castling
 extern BoardState currentState;
 extern BoardState prevState;
 
+extern int pawnPieceTable[2][64];
+extern int knightPieceTable[2][64];
+extern int bishopPieceTable[2][64];
+extern int rookPieceTable[2][64];
+extern int queenPieceTable[2][64];
+extern int kingPieceTable[2][64];
+
 #define WHITE_KINGSIDE  0x1
 #define WHITE_QUEENSIDE 0x2
 #define BLACK_KINGSIDE  0x4
@@ -115,8 +132,7 @@ void verticalFlip(uint64_t* bitboard);
 void prettyPrintBitboard(uint64_t bitboard);
 int getBoardAtIndex(int index, int colour);
 Piece getPieceAtSquare(int square);
-void saveBoardState();
-void restoreBoardState();
-void initBoardState();
+void saveBoardState(BoardState* state);
+void restoreBoardState(BoardState* state);
 
 #endif // BOARD_H

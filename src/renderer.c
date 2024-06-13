@@ -71,7 +71,7 @@ void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDr
     for (int pieceType = 1; pieceType < 13; pieceType++)
     {
         Piece piece = {pieceType % 6, pieceType < 7 ? WHITE : BLACK, pieceSprites[pieceType - 1]};
-        uint64_t bitboard = bitboards[pieceType];
+        uint64_t bitboard = currentState.bitboards[pieceType];
         while (bitboard) {
             int square = __builtin_ctzll(bitboard);
             bitboard &= bitboard - 1;

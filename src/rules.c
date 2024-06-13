@@ -22,7 +22,7 @@ int isCheckmate(int colour);
 void updateAttackBitboards(int colour);
 void updateGlobalAttackBitboards();
 // int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves);
-int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves, int simulate);
+int makeMove(Move move, int simulate);
 void validateMoves(int colour, uint64_t* validMoves);
 void removePiece(uint64_t *bitboard, uint64_t bit);
 
@@ -38,7 +38,7 @@ void validateMoves(int colour, uint64_t* validMoves) {
     // Iterate over valid moves for each piece type
     for (int pieceType = 1; pieceType < 7; pieceType++) {
         int bitboardIndex = getBitboardIndex(pieceType, colour);
-        uint64_t bitboard = bitboards[bitboardIndex];
+        uint64_t bitboard = currentState.bitboards[bitboardIndex];
         while (bitboard) {
             // Get the position of the piece
             int pos = __builtin_ctzll(bitboard);
@@ -49,11 +49,22 @@ void validateMoves(int colour, uint64_t* validMoves) {
                 // Get the position of the move
                 int movePos = __builtin_ctzll(moves);
                 // Make the move
-                if (!makeMove((Piece){pieceType, colour}, pos, movePos, validMoves, 1)) {
+                Move move = {
+                    .piece = (Piece){pieceType, colour},
+                    .from = pos,
+                    .to = movePos
+                };
+                if (!makeMove(move, 1)) {
+                // if (!makeMove((Piece){pieceType, colour}, pos, movePos, validMoves, 1)) {
                     // If the move puts the king in check, then remove the move from the valid moves
                     validMoves[pos] &= ~(1ULL << movePos);
                     // Remove from the attack bitboard
-                    attackBitboards[bitboardIndex] &= ~(1ULL << movePos);
+                    currentState.attackBitboards[bitboardIndex] &= ~(1ULL << movePos);
+                    if (pieceType == PAWN) {
+                        // Remove pawn captures from the attack bitboard
+                        currentState.attackBitboards[bitboardIndex] &= ~(getPawnCaptureMask(1ULL << pos, colour));
+                    }
+                    saveBoardState(&prevState);
                     // printf("Invalid move: %d -> %d\n", pos, movePos);
                 }
                 // Remove the move from the valid moves
@@ -94,11 +105,11 @@ Position* bitboardToPosition(uint64_t bitboard) {
 
 int isCapture(uint64_t bitboard, int colour, int pieceType) {
     // Check if the move is a capture
-    uint64_t expr = bitboard & bitboards[colour ? 13 : 14];
+    uint64_t expr = bitboard & currentState.bitboards[colour ? 13 : 14];
     switch (pieceType)
     {
     case PAWN:
-        expr = (bitboards[colour ? 13 : 14] | enPassantMask) & bitboard;
+        expr = (currentState.bitboards[colour ? 13 : 14] | currentState.enPassantMask) & bitboard;
         break;
     default:
         break;
@@ -112,13 +123,20 @@ int isCheck(int colour) {
     // If the colour is in check, then return 1
     // Otherwise, return 0
     // print the attack bitboard if in check
-    return (bitboards[colour ? 12 : 6] & attackBitboards[colour ? 13 : 14]) != 0;
+    return (currentState.bitboards[colour ? 12 : 6] & currentState.attackBitboards[colour ? 13 : 14]) != 0;
 }
 
 int isCheckmate(int colour) {
     // If attack bitboard is empty, then return 1
     // Otherwise, return 0
-    return (attackBitboards[colour ? 14 : 13] == 0ULL);
+    return (currentState.attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] == 0ULL);
+}
+
+int isEndGame() {
+    // Check if the game is in the endgame
+    // The game is in the endgame if either there are no queens on the board, or if the total material (excluding kings) is less than a certain threshold
+    int threshold = 6;
+    return (currentState.bitboards[WHITE_QUEEN] == 0ULL && currentState.bitboards[BLACK_QUEEN] == 0ULL) || (__builtin_popcount(currentState.bitboards[GLOBAL]) < threshold);
 }
 
 void removePiece(uint64_t *bitboard, uint64_t bit) {
@@ -129,22 +147,22 @@ void removePiece(uint64_t *bitboard, uint64_t bit) {
 void promotePiece(uint64_t bit, int pieceType, int colour) {
     // Promote the piece at the given bit to the given piece type
     // Remove the piece from the bitboard
-    removePiece(&bitboards[colour ? 13 : 14], bit);
+    removePiece(&currentState.bitboards[colour ? 13 : 14], bit);
     // Add the new piece to the bitboard
-    bitboards[pieceType + (colour * 6)] |= bit;
+    currentState.bitboards[pieceType + (colour * 6)] |= bit;
 }
 
 void computeGlobalBitboard() {
-    bitboards[0] = bitboards[13] | bitboards[14];
+    currentState.bitboards[GLOBAL] = currentState.bitboards[WHITE_GLOB] | currentState.bitboards[BLACK_GLOB];
 }
 
 void computeColourBitboard(int colour) {
     switch (colour) {
         case WHITE:
-            bitboards[13] = bitboards[1] | bitboards[2] | bitboards[3] | bitboards[4] | bitboards[5] | bitboards[6];
+            currentState.bitboards[WHITE_GLOB] = currentState.bitboards[1] | currentState.bitboards[2] | currentState.bitboards[3] | currentState.bitboards[4] | currentState.bitboards[5] | currentState.bitboards[6];
             break;
         case BLACK:
-            bitboards[14] = bitboards[7] | bitboards[8] | bitboards[9] | bitboards[10] | bitboards[11] | bitboards[12];
+            currentState.bitboards[BLACK_GLOB] = currentState.bitboards[7] | currentState.bitboards[8] | currentState.bitboards[9] | currentState.bitboards[10] | currentState.bitboards[11] | currentState.bitboards[12];
             break;
     }
 }
@@ -153,10 +171,10 @@ void updateAttackBitboards(int colour) {
     switch (colour)
     {
     case WHITE:
-        attackBitboards[13] = attackBitboards[1] | attackBitboards[2] | attackBitboards[3] | attackBitboards[4] | attackBitboards[5] | attackBitboards[6];
+        currentState.attackBitboards[WHITE_GLOB] = currentState.attackBitboards[1] | currentState.attackBitboards[2] | currentState.attackBitboards[3] | currentState.attackBitboards[4] | currentState.attackBitboards[5] | currentState.attackBitboards[6];
         break;
     case BLACK:
-        attackBitboards[14] = attackBitboards[7] | attackBitboards[8] | attackBitboards[9] | attackBitboards[10] | attackBitboards[11] | attackBitboards[12];
+        currentState.attackBitboards[BLACK_GLOB] = currentState.attackBitboards[7] | currentState.attackBitboards[8] | currentState.attackBitboards[9] | currentState.attackBitboards[10] | currentState.attackBitboards[11] | currentState.attackBitboards[12];
         break;
     
     default:
@@ -165,7 +183,7 @@ void updateAttackBitboards(int colour) {
 }
 
 void updateGlobalAttackBitboards() {
-    attackBitboards[0] = attackBitboards[13] | attackBitboards[14];
+    currentState.attackBitboards[GLOBAL] = currentState.attackBitboards[WHITE_GLOB] | currentState.attackBitboards[BLACK_GLOB];
 }
 
 void updateBitboards() {
@@ -186,97 +204,93 @@ int isMoveValid(Move move, uint64_t* validMoves) {
     return validMoves[move.from] & (1ULL << move.to) ? 1 : 0;
 }
 
-int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves, int simulate) {
-    uint64_t destBitboard = 1ULL << squareTo;
-    int bitboardIndex = getBitboardIndex(selectedPiece.type, selectedPiece.color);
+int countValidMoves(uint64_t* validMoves) {
+    // Count the number of valid moves
+    int count = 0;
+    for (int i = 0; i < BOARD_SIZE * BOARD_SIZE; ++i) {
+        count += __builtin_popcountll(validMoves[i]);
+    }
+    return count;
+}
 
-    // Simulate the move to ensure that the king is not in check
-    // Make a copy of the board state
-    // uint64_t tempBitboards[15];
-    // uint64_t tempAttackBitboards[15];
-    // memcpy(tempBitboards, bitboards, sizeof(bitboards));
-    // memcpy(tempAttackBitboards, attackBitboards, sizeof(attackBitboards));
-    saveBoardState();
+int makeMove(Move move, int simulate) {
+    uint64_t destBitboard = 1ULL << move.to;
+    uint64_t* tmpMoves = malloc(sizeof(uint64_t) * BOARD_SIZE * BOARD_SIZE);
+    int bitboardIndex = getBitboardIndex(move.piece.type, move.piece.color);
 
     // Remove the piece from the source square
-    currentState.bitboards[bitboardIndex] &= ~(1ULL << squareFrom);
+    currentState.bitboards[bitboardIndex] &= ~(1ULL << move.from);
 
     // Handle Pawn promotion (if applicable)
-    if (selectedPiece.type == PAWN && (destBitboard & promotionMask[selectedPiece.color]) != 0ULL) {
+    if (move.piece.type == PAWN && (destBitboard & promotionMask[move.piece.color]) != 0ULL) {
         // Promote the pawn by switching the piece type
-        bitboardIndex = getBitboardIndex(QUEEN, selectedPiece.color);
+        bitboardIndex = getBitboardIndex(QUEEN, move.piece.color);
+    }
+
+    // Check if the move is a capture
+    int capture = isCapture(destBitboard, move.piece.color, move.piece.type);
+    if (capture) {
+        // Get the piece at the destination
+        if (move.piece.type == PAWN && ((1ULL << move.to) & currentState.enPassantMask) != 0ULL) {
+            removePiece(&currentState.bitboards[1 + (!(move.piece.color) * 6)], (1ULL << (move.to + (move.piece.color ? -8 : 8))));
+        } else {
+            removePiece(&currentState.bitboards[getBoardAtIndex(move.to, !move.piece.color)], destBitboard);
+        }
     }
 
     // Move the piece to the destination square
-    currentState.bitboards[bitboardIndex] |= (1ULL << squareTo);
-    // Check if the move is a capture
-    int capture = isCapture(destBitboard, selectedPiece.color, selectedPiece.type);
-    if (capture) {
-        // printf("Capture!\n");
-        // Get the piece at the destination
-        if (selectedPiece.type == PAWN && ((1ULL << squareTo) & enPassantMask) != 0ULL) {
-            removePiece(&currentState.bitboards[1 + (!(selectedPiece.color) * 6)], (1ULL << (squareTo + (selectedPiece.color ? -8 : 8))));
-        } else {
-            removePiece(&currentState.bitboards[getBoardAtIndex(squareTo, !selectedPiece.color)], destBitboard);
-        }
-    }
+    currentState.bitboards[bitboardIndex] |= (1ULL << move.to);
 
     // Update the bitboards to reflect the move
     updateBitboards();
 
     if (simulate) {
         // Recompute attack bitboards for the opposite colour
-        getPseudoValidMoves(!selectedPiece.color, validMoves);
+        getPseudoValidMoves(!move.piece.color, tmpMoves);
         // Update the bitboards to reflect the attacks 
         updateBitboards();
-        int check = isCheck(selectedPiece.color);
+        int check = isCheck(move.piece.color);
+        free(tmpMoves);
 
-        // Undo the move
-        // memcpy(bitboards, tempBitboards, sizeof(bitboards));
-        // memcpy(attackBitboards, tempAttackBitboards, sizeof(attackBitboards));
-        // restoreBoardState(&currentState);
-        restoreBoardState();
+        restoreBoardState(&prevState); // restore the board state to the previous state
         return !check;
     }
 
     // Set the en passant square (if applicable)
-    if (selectedPiece.type == PAWN && abs(squareFrom - squareTo) == 16) {
-        enPassantMask = 1ULL << (squareTo + (selectedPiece.color ? -8 : 8));
+    if (move.piece.type == PAWN && abs(move.from - move.to) == 16) {
+        currentState.enPassantMask = 1ULL << (move.to + (move.piece.color ? -8 : 8));
     } else {
-        enPassantMask = 0ULL;
+        currentState.enPassantMask = 0ULL;
     }
 
     // Handle castling
-    if (selectedPiece.type == KING) {
+    if (move.piece.type == KING) {
         // Move the rook
-        if (abs(squareFrom - squareTo) == 2) {
-            int rookSquareFrom = squareFrom + (squareTo - squareFrom > 0 ? 3 : -4);
-            int rookSquareTo = squareFrom + (squareTo - squareFrom > 0 ? 1 : -1);
+        if (abs(move.from - move.to) == 2) {
+            int rookSquareFrom = move.from + (move.to - move.from > 0 ? 3 : -4);
+            int rookSquareTo = move.from + (move.to - move.from > 0 ? 1 : -1);
             // Move the rook
-            currentState.bitboards[getBitboardIndex(ROOK, selectedPiece.color)] &= ~(1ULL << rookSquareFrom);
-            currentState.bitboards[getBitboardIndex(ROOK, selectedPiece.color)] |= (1ULL << rookSquareTo);
+            currentState.bitboards[getBitboardIndex(ROOK, move.piece.color)] &= ~(1ULL << rookSquareFrom);
+            currentState.bitboards[getBitboardIndex(ROOK, move.piece.color)] |= (1ULL << rookSquareTo);
         }
 
         // Redact the castling rights
-        castleRights &= ~(selectedPiece.color ? BLACK_KINGSIDE : WHITE_KINGSIDE);
-        castleRights &= ~(selectedPiece.color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE);
+        currentState.castleRights &= ~(move.piece.color ? BLACK_KINGSIDE : WHITE_KINGSIDE);
+        currentState.castleRights &= ~(move.piece.color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE);
     }
 
-    if (selectedPiece.type == ROOK && (castleRights & ((selectedPiece.color ? BLACK_KINGSIDE : WHITE_KINGSIDE))
-        || (selectedPiece.color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE))) {
+    if (move.piece.type == ROOK && (currentState.castleRights & ((move.piece.color ? BLACK_KINGSIDE : WHITE_KINGSIDE))
+        || (move.piece.color ? BLACK_QUEENSIDE : WHITE_QUEENSIDE))) {
         // Check whether rook is king side or queen side
-        int side = (squareFrom % 8 > 3) ? 0 : 1;
+        int side = (move.from % 8 > 3) ? 0 : 1;
 
         // Redact the castling rights for the respective side
-        castleRights &= ~(selectedPiece.color ? (side ? BLACK_QUEENSIDE : BLACK_KINGSIDE) : (side ? WHITE_QUEENSIDE : WHITE_KINGSIDE));
+        currentState.castleRights &= ~(move.piece.color ? (side ? BLACK_QUEENSIDE : BLACK_KINGSIDE) : (side ? WHITE_QUEENSIDE : WHITE_KINGSIDE));
     }
 
 
-    // moveToNotation(selectedPiece, squareToPos(squareFrom), squareToPos(squareTo), capture);
-    // Recompute attack bitboards
-    getPseudoValidMoves(selectedPiece.color, validMoves);
-    // updateAttackBitboards(selectedPiece.color);
-    updateBitboards();
+    // moveToNotation(move.piece, squareToPos(move.from), squareToPos(move.to), capture);
+    free(tmpMoves);
     return 1;
 }
 
@@ -350,7 +364,7 @@ void parseFENToBitboard(char* fen) {
             // Set the bit at the current position to 1 for the respective bitboard
             if (pieceIndex != -1) {
                 uint64_t bitPosition = 1ULL << squareIndex;
-                bitboards[pieceIndex] |= bitPosition;
+                currentState.bitboards[pieceIndex] |= bitPosition;
             }
             squareIndex++;
         }
@@ -361,7 +375,7 @@ void parseFENToBitboard(char* fen) {
     // Flip the vertical orientation of the bitboard
     // This is necessary because the FEN string starts at the 8th rank, whereas the bitboard starts at the 1st rank
     for (int i=1; i<13; i++) {
-        verticalFlip(&bitboards[i]);
+        verticalFlip(&currentState.bitboards[i]);
     }
     // Global bitboard is the bitwise OR of all the bitboards
     updateBitboards();
