@@ -4,14 +4,16 @@
 #include <SDL.h>
 #include <SDL_ttf.h>
 // #include <SDL_image.h>
-#include "../include/board.h"
-#include "../include/rules.h"
-#include "../include/renderer.h"
-#include "../include/helperMethods.h"
-#include "../include/movegen.h"
-#include "../include/evaluate.h"
+#include <board.h>
+#include <rules.h>
+#include <renderer.h>
+#include <helperMethods.h>
+#include <movegen.h>
+#include <evaluate.h>
+#include <zobrist.h>
+#include <transposition.h>
 
-#define TOTAL_POSSIBLE_MOVES 218 // 218 possible moves
+#define MAX_DEPTH 25 // Maximum depth for the minimax algorithm
 // Global running time variables
 int running = 1;
 int turnCounter = 0;
@@ -22,7 +24,7 @@ int mouseX = 0;
 int mouseY = 0;
 int isDragging = 0;
 int turnStart = 1;
-uint64_t* validMoves;
+Move* validMoves;
 int playerColour = WHITE;
 int aiOnly = 0;
 // Renderer variables
@@ -44,105 +46,122 @@ void parseArgs(int argc, char* argv[]) {
     }
 };
 
+void resetValidMoves() {
+    for (int i = 0; i < TOTAL_POSSIBLE_MOVES; i++) {
+        validMoves[i].from = -1;
+        validMoves[i].to = -1;
+        validMoves[i].score = -999999;
+    }
+}
+
 int main(int argc, char* argv[]) {
+    // Setup of game state
     // Parse command line arguments
     parseArgs(argc, argv);
     // Allocate memory for the valid moves lookup table
-    validMoves = malloc(sizeof(uint64_t) * TOTAL_POSSIBLE_MOVES);
+    validMoves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+    // Allocate memory for the current state pointer
+    currentState = malloc(sizeof(BoardState));
+    resetValidMoves();
     // Print the board (for debugging purposes)
     initRenderer(&window, &renderer);
+
+    // Initialise the state history stack
+    printf("Initialising state history stack.\n");
+    stateHistory = createStack(sizeof(BoardState), 256);
+
     char fen[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
-    int colour;
+    // char fen[] = "q2r1rk1/1p1b1ppp/p1nppn2/8/2P1P3/2N2N2/PP2BPPP/R2Q1RK1";
+    int sideToMove;
     char* fenPtr = fen;
 
-    int searchDepth = 3;
-
-    parseFENToBitboard(fenPtr);
+    parseFENToBitboard(fenPtr, currentState);
     // Initialise lookup tables
+    printf("Initialising lookup tables.\n");
     initLookups();
     initPieceSqTables();
+    updateBitboards();
+    currentState->castleRights = WHITE_KINGSIDE | WHITE_QUEENSIDE | BLACK_KINGSIDE | BLACK_QUEENSIDE;
+    currentState->checkBitboard = 0xFFFFFFFFFFFFFFFFULL;
+    currentState->doubleCheck = 0;
+    currentState->halfMoveClock = 1;
+    currentState->sideToMove = WHITE;
+    // Generate the attack bitboards for the initial state
+    printf("Generating attack bitboards.\n");
+    getPseudoValidMoves(WHITE, validMoves);
+    getPseudoValidMoves(BLACK, validMoves);
+    resetValidMoves();
+    // updateBitboards();
 
-    // Save the initial board state
-    // Setup the initial board state
-    currentState.castleRights = WHITE_KINGSIDE | WHITE_QUEENSIDE | BLACK_KINGSIDE | BLACK_QUEENSIDE;
-    saveBoardState(&prevState);
+    // Initialise the Zobrist hash
+    printf("Initialising Zobrist hash.\n");
+    initZobrist();
 
-    Position* validPositions = NULL;
+    // Initialise the transposition table
+    printf("Initialising transposition table.\n");
+    initTranspositionTable();
+
+    // Push the initial state onto the stack
+    printf("Pushing initial state onto the stack.\n");
+    push(stateHistory, currentState);
 
     // Game loop
     while (running) {
         // Handle events
         // Exit if the ESC key is pressed
         if (turnStart) {
+            // Retrieve top of stack
             turnCounter++;
-            colour = !(turnCounter % 2);
-            printf("Turn %d: %c to move.\n", turnCounter, turnCounter % 2 == 0 ? 'b' : 'w');
+            sideToMove = !(turnCounter % 2);
 
-            getPseudoValidMoves(!colour, validMoves);
-            // Clear the valid moves
-            for (int i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
-                validMoves[i] = 0;
-            }
-            getPseudoValidMoves(colour, validMoves);
-            saveBoardState(&prevState);
+            printf("Turn %d: %c to move.\n", currentState->halfMoveClock, currentState->sideToMove == 0 ? 'w' : 'b');
+            getPseudoValidMoves(!sideToMove, validMoves);
+            resetValidMoves();
+            getPseudoValidMoves(sideToMove, validMoves);
 
-            validateMoves(colour, validMoves);
-
-            // Count the number of valid moves
-            int numValidMoves = countValidMoves(validMoves);
-
-            printf("Number of valid moves: %d\n", numValidMoves);
-
-            if (isCheck(colour)) {
+            qsort(validMoves, currentState->numValidMoves, sizeof(Move), compareMoves);
+            printf("Number of valid moves: %d\n", currentState->numValidMoves);
+            printValidMoves(validMoves, TOTAL_POSSIBLE_MOVES);
+            if (isCheck(sideToMove)) {
                 printf("Check!\n");
-                if (numValidMoves == 0) {
-                    printf("Checkmate! %c wins!\n", colour ? 'w' : 'b');
-                    // turnStart = 0;
-                    // Exit the game
+                // Print the check bitboard
+                prettyPrintBitboard(currentState->checkBitboard);
+                if (currentState->numValidMoves == 0) {
+                    printf("Checkmate!\n");
                     running = 0;
-                    break;
+                    break; // Exit the game
                 }
-            } else if (numValidMoves == 0) {
+            } else if (currentState->numValidMoves == 0) {
                 printf("Stalemate!\n");
                 running = 0;
                 break; // Exit the game
             }
+            
+            prettyPrintBitboard(currentState->bitboards[GLOBAL]);
+            printf("Castling rights: %d\n", currentState->castleRights);
 
             // run minimax algorithm if it's the AI's turn
-            if ((colour == !playerColour || aiOnly) && running) {
-            // if (running) {
-                if (numValidMoves == 1) {
-                    // Forced move
-                    printf("Forced move!\n");
-                    searchDepth = 1;
-                // } else if (numValidMoves <= 5) {
-                //     searchDepth = 7;
-                } else if (numValidMoves <= 30) {
-                    searchDepth = 6;
-                } else {
-                    searchDepth = 5;
-                }
-                Move bestMove = findBestMove(4, colour, validMoves);
+            if ((sideToMove == !playerColour || aiOnly) && running) {
+                Move bestMove = findBestMove(MAX_DEPTH, sideToMove, validMoves);
                 if (bestMove.from == -1 || bestMove.to == -1) {
                     printf("No valid moves found! Probably checkmate, or there's a bug in the code.\n");
                     running = 0;
                     break;
                 }
 
-                printf("Best move: %c%d (%d) to %c%d (%d)\n", colToFile(bestMove.from % 8), 8 - bestMove.from / 8, bestMove.from, colToFile(bestMove.to % 8), 8 - bestMove.to / 8, bestMove.to);
+                printf("Best move: %c%d (%d) to %c%d (%d) score: %d\n", colToFile(bestMove.from % 8), 8 - bestMove.from / 8, bestMove.from, colToFile(bestMove.to % 8), 8 - bestMove.to / 8, bestMove.to, bestMove.score);
 
                 if (makeMove(bestMove, 0)) {
-                    selectedPiece = NULL;
-                    selectedX = -1;
-                    selectedY = -1;
-                    validPositions = NULL;
-                    turnStart = 1;
-                    // endTurn();
+                    printf("Move successful!\n");
+                    endTurn();
+                } else {
+                    printf("Move failed!\n");
                 }
-
+            } else {
             }
 
-            if (playerColour == colour && !aiOnly) turnStart = 0;
+            if (playerColour == sideToMove && !aiOnly) turnStart = 0;
+            // turnStart = 0;
         }
 
         SDL_Event event;
@@ -150,7 +169,7 @@ int main(int argc, char* argv[]) {
             running = (event.type == SDL_QUIT || 
             (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE)) ? 0 : running;
 
-            uint64_t bitboard = currentState.bitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB];
+            uint64_t bitboard = currentState->bitboards[sideToMove == WHITE ? WHITE_GLOB : BLACK_GLOB];
 
             // Handle mouse button down event
             if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
@@ -168,7 +187,7 @@ int main(int argc, char* argv[]) {
                     selectedX = col;
                     selectedY = row;
                     isDragging = 1;
-                    printValidMoves(validMoves[row * BOARD_SIZE + col]);
+                    // printValidMoves(validMoves[row * BOARD_SIZE + col]);
                 }
             } 
 
@@ -178,11 +197,11 @@ int main(int argc, char* argv[]) {
                 int row = mouseY / SQUARE_SIZE;
                 int col = mouseX / SQUARE_SIZE;
                 // Check if the mouse is hovering over a non-empty square
-                if (currentState.bitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] & (1ULL << (row * BOARD_SIZE + col)) && !isDragging) {
+                if (currentState->bitboards[sideToMove == WHITE ? WHITE_GLOB : BLACK_GLOB] & (1ULL << (row * BOARD_SIZE + col)) && !isDragging) {
                     // Compute the valid moves for the piece
-                    validPositions = bitboardToPosition(validMoves[row * BOARD_SIZE + col]);
+                    // validPositions = bitboardToPosition(validMoves[row * BOARD_SIZE + col]);
                 } else if (!isDragging) {
-                    validPositions = NULL;
+                    // validPositions = NULL;
                 }
             }
 
@@ -198,15 +217,9 @@ int main(int argc, char* argv[]) {
                 Move move = {*selectedPiece, squareFrom, squareTo};
                 if (isMoveValid(move, validMoves)) {
                     printf("Move is valid!\n");
-                    Move move = {*selectedPiece, squareFrom, squareTo};
                     int success = makeMove(move, 0);
                     if (success) {
-                        // endTurn();
-                        turnStart = 1;
-                        selectedPiece = NULL;
-                        selectedX = -1;
-                        selectedY = -1;
-                        validPositions = NULL;
+                        endTurn();
                     }
                 } else {
                     printf("Move is invalid!\n");
@@ -215,20 +228,33 @@ int main(int argc, char* argv[]) {
         }
 
         // Update game state
-        renderFrame(&renderer, selectedX, selectedY, isDragging, validPositions);
+        renderFrame(&renderer, selectedX, selectedY, isDragging, currentState->numValidMoves, validMoves);
     }
 
     // Cleanup and quit
     cleanupRenderer(&window, &renderer);
     // Free lookup tables
     free(validMoves);
+    free(currentState);
+    freeTranspositionTable();
     return 0;
 }
 
 void endTurn() {
+    printf("Ending turn.\n");
     turnStart = 1;
     selectedPiece = NULL;
     selectedX = -1;
     selectedY = -1;
-    validMoves = NULL;
+
+    // Get the current state from the stack
+    currentState = peek(stateHistory);
+
+    // Update the half move clock and side to move
+    currentState->halfMoveClock++;
+    currentState->sideToMove = (currentState->sideToMove == WHITE) ? BLACK : WHITE;
+    // Reset check state
+    // Reset the check state
+    currentState->checkBitboard = 0xFFFFFFFFFFFFFFFFULL;
+    currentState->doubleCheck = 0;
 }

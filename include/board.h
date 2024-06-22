@@ -1,11 +1,13 @@
 // board.h
 #include <stdint.h>
-
+#include <stack.h>
 #ifndef BOARD_H
 #define BOARD_H
 
 #define BOARD_SIZE 8
 #define SQUARE_SIZE 50
+
+#define TOTAL_POSSIBLE_MOVES 218 // 218 total possible moves in a given position
 
 #define RIGHT_WRAP_MASK 0x7F7F7F7F7F7F7F7FULL;
 #define LEFT_WRAP_MASK 0xFEFEFEFEFEFEFEFEULL;
@@ -28,6 +30,10 @@ typedef enum {
     BLACK_PAWN, BLACK_KNIGHT, BLACK_BISHOP, BLACK_ROOK, BLACK_QUEEN, BLACK_KING,
     WHITE_GLOB, BLACK_GLOB
 } BitboardIndex;
+
+typedef enum {
+    NORTH, SOUTH, EAST, WEST, NORTH_EAST, NORTH_WEST, SOUTH_EAST, SOUTH_WEST
+} Direction;
 
 // Asset path for the piece sprites
 static const char* pieceSprites[] = {
@@ -68,11 +74,12 @@ typedef struct {
     uint64_t attackBitboards[15];
     uint64_t enPassantMask;
     uint8_t castleRights;
+    uint64_t checkBitboard;
+    int doubleCheck;
+    int numValidMoves;
+    int halfMoveClock;
+    int sideToMove;
 } BoardState;
-
-
-
-Piece board[BOARD_SIZE][BOARD_SIZE];
 
 // Square encoding
 enum {
@@ -108,8 +115,10 @@ extern uint64_t kingSideCastleMask[2]; // Mask tracking the king side castling s
 extern uint64_t queenSideCastleMask[2]; // Mask tracking the queen side castling squares
 // extern uint8_t castleRights; // Bitmask tracking the castling rights
 
-extern BoardState currentState;
+extern BoardState *currentState;
 extern BoardState prevState;
+
+extern Stack *stateHistory;
 
 extern int pawnPieceTable[2][64];
 extern int knightPieceTable[2][64];
@@ -132,7 +141,5 @@ void verticalFlip(uint64_t* bitboard);
 void prettyPrintBitboard(uint64_t bitboard);
 int getBoardAtIndex(int index, int colour);
 Piece getPieceAtSquare(int square);
-void saveBoardState(BoardState* state);
-void restoreBoardState(BoardState* state);
 
 #endif // BOARD_H

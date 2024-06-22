@@ -1,7 +1,7 @@
 #ifndef RULES_H
 #define RULES_H
 
-uint64_t parseFENToBitboard(char* fen);
+void parseFENToBitboard(char* fen, BoardState* state);
 uint64_t computeColourBitboard(int colour);
 void updateBitboards();
 uint64_t coordToBitboard(int row, int col);
@@ -18,7 +18,8 @@ void promotePiece(uint64_t bit, int pieceType, int colour);
 // int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves);
 // int makeMove(Piece selectedPiece, int squareFrom, int squareTo, uint64_t* validMoves, int simulate);
 int makeMove(Move move, int simulate);
-void validateMoves(int colour, uint64_t* validMoves);
+// void validateMoves(int colour, uint64_t* validMoves);
 int countValidMoves(uint64_t* validMoves);
-int isMoveValid(Move move, uint64_t* validMoves);
+// int isMoveValid(Move move, uint64_t* validMoves);
+int isMoveValid(Move move, Move* validMoves);
 #endif

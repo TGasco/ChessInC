@@ -90,13 +90,18 @@ void moveToNotation(Piece piece, Position posFrom, Position posTo, int capture) 
     printf("%s%c%d\n", notation, colToFile(posTo.col), 8 - posTo.row);
 }
 
-void printValidMoves(uint64_t validMoves) {
+void printValidMoves(Move* validMoves, int numValidMoves) {
     // Print the valid moves to the console
     printf("Valid moves: ");
-    for (int idx = 0; idx < BOARD_SIZE * BOARD_SIZE; idx++) {
-        if (validMoves & (1ULL << idx)) {
-            printf("%c%d, ", colToFile(idx % BOARD_SIZE), 8 - (idx / BOARD_SIZE));
+    int move = 0;
+    int idx = numValidMoves;
+    while (move < idx) {
+        if (validMoves[move].to == -1) {
+            printf("End: Total moves: %d\n", move);
+            break;
         }
+        printf("%c%d Score: %d, ", colToFile(validMoves[move].to % 8), 8 - validMoves[move].to / 8, validMoves[move].score);
+        move++;
     }
     printf("\n");
 }
@@ -107,6 +112,11 @@ int squareToBitIndex(const char* square) {
     int file = square[0] - 'a';
     int rank= 8 - (square[1] - '0');
     return rank * 8 + file;
+}
+
+uint64_t indexToBitboard(int square) {
+    // Convert the given square to a bitboard
+    return (1ULL << square);
 }
 
 int posToSquare(Position pos) {

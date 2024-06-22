@@ -4,11 +4,17 @@
 #include <rules.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <time.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <helperMethods.h>
+#include <zobrist.h>
+#include <transposition.h>
+
 #define INFINITY INT_MAX
+#define TIME_LIMIT 1.0
 struct PieceValues pieceValues = {
     .values = {0, 1000, 3200, 3300, 5000, 9000, 200000}
 };
@@ -17,6 +23,13 @@ int evaluateMaterial(uint64_t* bitboards);
 int max(int a, int b);
 int min(int a, int b);
 
+int searchedNodes = 0;
+int prunedNodes = 0;
+
+clock_t startTime;  // Start time of the search
+bool timeExceeded = false;  // Flag to indicate if the time limit was exceeded
+
+Move bestMoveIterative;  // Global variable to store the best move
 
 int midPawnTable[64] = {
       0,   0,   0,   0,   0,   0,  0,   0,
@@ -187,29 +200,23 @@ void initPieceSqTables() {
             endTable[piece+5][sq] = endValue[piece-1] + endPestoTable[piece-1][FLIP(sq)];
         }
     }
-    // Print the midgame and endgame tables to debug
-    // for (int i=0; i<12; i++) {
-    //     printf("Piece %d Colour %d\n", i, i < 7 ? WHITE : BLACK);
-    //     for (int j=0; j<64; j++) {
-    //         printf("%d ", midTable[i][j]);
-    //         if (j % 8 == 7) printf("\n");
-    //     }
-    //     printf("\n");
-    // }
+}
 
-    // for (int i=0; i<12; i++) {
-    //     printf("Piece %d Colour %d\n", i, i < 7 ? WHITE : BLACK);
-    //     for (int j=0; j<64; j++) {
-    //         printf("%d ", endTable[i][j]);
-    //         if (j % 8 == 7) printf("\n");
-    //     }
-    //     printf("\n");
-    // }
+int getManhattanDistance(int from, int to) {
+    int fromRow = from / 8;
+    int fromCol = from % 8;
+    int toRow = to / 8;
+    int toCol = to % 8;
+
+    return abs(fromRow - toRow) + abs(fromCol - toCol);
 }
 
 int taperedEval(uint64_t* bitboards, int side) {
+    // printf("Boasrd state at eval\n");
+    // prettyPrintBitboard(bitboards[0]);
     int mid[2];
     int end[2];
+    int bonus = 0;
 
     mid[WHITE] = 0;
     mid[BLACK] = 0;
@@ -218,8 +225,11 @@ int taperedEval(uint64_t* bitboards, int side) {
     int gamePhase = 0;
     int maxGamePhase = 24;
 
+    uint64_t centreMask = 0x3C3C000000ULL;
+    int kingPos;
     // Evaluate all pieces for each colour
     for (int colour=WHITE; colour<=BLACK; colour++) {
+        kingPos = __builtin_ctzll(bitboards[colour == WHITE ? BLACK_KING : WHITE_KING]);
         for (int piece=PAWN; piece<=KING; piece++) {
             int bitboardIndex = getBitboardIndex(piece, colour);
 
@@ -229,190 +239,328 @@ int taperedEval(uint64_t* bitboards, int side) {
             while (bitboard) {
                 int pos = __builtin_ctzll(bitboard);
                 bitboard &= bitboard - 1;
+                // Check if square is attacked by opponent
+                // if (currentState->attackBitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB] & (1ULL << pos)) {
+                //     bonus -= (midValue[pieceType / 2]) * (colour == side ? 1 : -1);
+                // }
+                // Check if piece is protected by own piece
+                if (currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] & (1ULL << pos)) {
+                    bonus += (midValue[pieceType] / 10) * (colour == side ? 1 : -1);
+                }
+
+                // Get distace to opponent king
+                int distToKing = getManhattanDistance(pos, kingPos);
+                bonus += (8-distToKing) * 5 * (colour == side ? 1 : -1);
+
                 mid[colour] += midTable[pieceType][pos];
                 end[colour] += endTable[pieceType][pos];
                 gamePhase += gamephaseInc[pieceType];
             }
         }
+        // Center control bonus
+        int centreControl = __builtin_popcountll(centreMask & bitboards[colour == WHITE ? WHITE_PAWN : BLACK_PAWN]);
+
+        bonus += centreControl * 2 * (colour == side ? 1 : -1);
+
+        // Mobility bonus: number of bits set in attack bitboard
+        bonus += __builtin_popcountll(currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB]) * (colour == side ? 1 : -1);
+
+
+        if (isCheck(!colour)) {
+            bonus += 250 * (colour == side ? 1 : -1);
+        }
     }
 
-    int midScore = mid[side] - mid[!side];
-    int endScore = end[side] - end[!side];
+
+
+    int midScore = (mid[side]) - mid[!side];
+    int endScore = (end[side]) - end[!side];
     int phase = gamePhase;
     if (phase > maxGamePhase) phase = maxGamePhase;
     int endPhase = maxGamePhase - phase;
-    return (((midScore * phase) + (endScore * endPhase)) / maxGamePhase);
+    return (((midScore * phase) + (endScore * endPhase)) / maxGamePhase) + bonus;
 }
 
 bool isTerminalState() {
     return (isCheck(BLACK) && isCheckmate(BLACK)) || (isCheck(WHITE) && isCheckmate(WHITE));
 }
 
+// Compare function for qsort (Move Ordering)
+int compareMoves(const void* a, const void* b) {
+    return ((Move*)b)->score - ((Move*)a)->score;
+}
 
 int minimax(int depth, int alpha, int beta, int color) {
+    if (((double)(clock() - startTime)) / CLOCKS_PER_SEC >= TIME_LIMIT) {
+        timeExceeded = true;
+        return 0;
+    }
+
+    uint64_t zobristKey = generateZobristKey(currentState);
+    int ttValue;
+    Move ttBestMove;
+    if (probeTranspositionTable(zobristKey, depth, alpha, beta, &ttValue, &ttBestMove)) {
+        return ttValue;
+    }
+
     if (depth == 0 || isTerminalState()) {
-        return taperedEval(currentState.bitboards, color);
+        int eval = taperedEval(&currentState->bitboards, color);
+        storeInTranspositionTable(zobristKey, depth, eval, (Move){-1, -1}, 0);
+        return eval;
     }
 
-    uint64_t moves[BOARD_SIZE * BOARD_SIZE];
-    BoardState state;
-    saveBoardState(&state);
+    Move* moves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+    if (moves == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    searchedNodes++;
     getPseudoValidMoves(color, moves);
-    validateMoves(color, moves);
+    int numPseudoMoves = currentState->numValidMoves;
 
-    int numValidMoves = countValidMoves(moves);
+    qsort(moves, numPseudoMoves, sizeof(Move), compareMoves);
+    int bestScore = -INFINITY / 2;
+    Move bestMove = {-1, -1};
+    int flag = 1;  // Alpha flag
 
-    if (numValidMoves == 0) {
-        return isCheck(color) ? -INFINITY : 0;
-    }
-
-    for (int pieceType = PAWN; pieceType <= KING; pieceType++) {
-        int bitboardIndex = getBitboardIndex(pieceType, color);
-        uint64_t bitboard = currentState.bitboards[bitboardIndex];
-        while (bitboard) {
-            int squareFrom = __builtin_ctzll(bitboard);
-            uint64_t pieceMoves = moves[squareFrom];
-
-            while (pieceMoves) {
-                int squareTo = __builtin_ctzll(pieceMoves);
-                Move move = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
-                makeMove(move, 0);
-
-                int score = -minimax(depth - 1, -beta, -alpha, !color);
-
-                restoreBoardState(&state);
-
-                if (score >= beta) {
-                    // Move too good for the opponent, prune the branch
-                    // printf("Pruning branch at depth %d\n", depth);
-                    // printf("Beta is %d\n", beta);
-                    return beta;
-                }
-
-                alpha = max(alpha, score);
-                pieceMoves &= ~(1ULL << squareTo);
-            }
-            bitboard &= ~(1ULL << squareFrom);
+    for (int i = 0; i < numPseudoMoves; i++) {
+        Move *m = &moves[i];
+        if (m->from == -1 || m->to == -1) {
+            break;
         }
+        currentState = peek(stateHistory);
+
+        makeMove(*m, 0);
+        int score = -minimax(depth - 1, -beta, -alpha, !color);
+        pop(stateHistory);
+
+        if (timeExceeded) {
+            free(moves);
+            return 0;
+        }
+
+        if (score >= beta) {
+            storeInTranspositionTable(zobristKey, depth, beta, bestMove, 2);  // Beta flag
+            free(moves);
+            prunedNodes++;
+            return beta;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = *m;
+        }
+
+        alpha = max(alpha, score);
     }
-    return alpha;
+
+    if (bestScore > alpha) {
+        flag = 0;  // Exact flag
+    }
+
+    storeInTranspositionTable(zobristKey, depth, bestScore, bestMove, flag);
+    currentState = peek(stateHistory);
+    free(moves);
+    return bestScore;
 }
 
-    // if (color == WHITE) {
-    //     int bestValue = -INFINITY;
-    //     for (int pieceType = 1; pieceType < 7; pieceType++) {
-    //         int bitboardIndex = getBitboardIndex(pieceType, color);
-    //         uint64_t bitboard = currentState.bitboards[bitboardIndex];
-    //         while (bitboard) {
-    //             int squareFrom = __builtin_ctzll(bitboard);
-    //             uint64_t pieceMoves = moves[squareFrom];
-
-    //             while (pieceMoves) {
-    //                 int squareTo = __builtin_ctzll(pieceMoves);
-    //                 Move move = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
-    //                 makeMove(move, 0);
-
-    //                 int score = minimax(depth - 1, alpha, beta, BLACK) + numValidMoves;
-    //                 if (isCheck(BLACK)) {
-    //                     score += isCheckmate(BLACK) ? 1000000 : 300;
-    //                 }
-
-    //                 restoreBoardState(&state);
-
-    //                 bestValue = max(bestValue, score);
-    //                 alpha = max(alpha, score);
-    //                 if (beta <= alpha) {
-    //                     goto end_max;
-    //                 }
-    //                 pieceMoves &= ~(1ULL << squareTo);
-    //             }
-    //             bitboard &= ~(1ULL << squareFrom);
-    //         }
-    //     }
-    // end_max:
-    //     return bestValue;
-    // } else {
-    //     int bestValue = INFINITY;
-    //     for (int pieceType = 1; pieceType < 7; pieceType++) {
-    //         int bitboardIndex = getBitboardIndex(pieceType, color);
-    //         uint64_t bitboard = currentState.bitboards[bitboardIndex];
-    //         while (bitboard) {
-    //             int squareFrom = __builtin_ctzll(bitboard);
-    //             uint64_t pieceMoves = moves[squareFrom];
-
-    //             while (pieceMoves) {
-    //                 int squareTo = __builtin_ctzll(pieceMoves);
-    //                 Move move = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
-    //                 makeMove(move, 0);
-
-    //                 int score = minimax(depth - 1, alpha, beta, WHITE) - numValidMoves;
-    //                 if (isCheck(WHITE)) {
-    //                     score -= isCheckmate(WHITE) ? 1000000 : 300;
-    //                 }
-
-    //                 restoreBoardState(&state);
-
-    //                 bestValue = min(bestValue, score);
-    //                 beta = min(beta, score);
-    //                 if (beta <= alpha) {
-    //                     goto end_min;
-    //                 }
-    //                 pieceMoves &= ~(1ULL << squareTo);
-    //             }
-    //             bitboard &= ~(1ULL << squareFrom);
-    //         }
-    //     }
-    // end_min:
-    //     return bestValue;
-    // }
-
-
-Move findBestMove(int depth, int color, uint64_t* moves) {
-    BoardState state;
-    saveBoardState(&state);
-
+Move findBestMove(int maxDepth, int color, Move* moves) {
     Move bestMove = {-1, -1};
-
     int bestValue = -INFINITY;
+    Move bestMovePreviousDepth = {-1, -1};
+    int bestValuePreviousDepth = -INFINITY;
 
-    int alpha = -INFINITY;
-    int beta = INFINITY;
+    startTime = clock();
+    clock_t end;
+    double cpu_time_used;
 
-    for (int pieceType = PAWN; pieceType <= KING; pieceType++) {
-        int bitboardIndex = getBitboardIndex(pieceType, color);
-        uint64_t bitboard = currentState.bitboards[bitboardIndex];
-        while (bitboard) {
-            int squareFrom = __builtin_ctzll(bitboard);
-            uint64_t pieceMoves = moves[squareFrom];
+    for (int depth = 1; depth <= maxDepth; depth++) {
+        bestValue = -INFINITY / 2;
+        int alpha = -INFINITY;
+        int beta = INFINITY;
+        timeExceeded = false;
+        // Sort moves by heuristic score
+        qsort(moves, currentState->numValidMoves, sizeof(Move), compareMoves);
 
-            while (pieceMoves) {
-                int squareTo = __builtin_ctzll(pieceMoves);
-                Move move = (Move){(Piece){pieceType, color}, squareFrom, squareTo};
-
-                // Make the move
-                makeMove(move, 0);
-
-                int score = -minimax(depth, alpha, beta, !color);
-
-                restoreBoardState(&state);
-
-                if (score > bestValue) {
-                    printf("New best move with score %d for %c\n", score, color == WHITE ? 'w' : 'b');
-                    bestValue = score;
-                    bestMove = move;
-                }
-
-                pieceMoves &= ~(1ULL << squareTo);
+        for (int i = 0; i < currentState->numValidMoves; i++) {
+            Move *m = &moves[i];
+            if (m->from == -1 || m->to == -1) {
+                break;
             }
-            bitboard &= ~(1ULL << squareFrom);
+            currentState = peek(stateHistory);
+
+            makeMove(*m, 0);
+            int score = -minimax(depth - 1, alpha, beta, !color);
+            pop(stateHistory);
+
+            if (timeExceeded) {
+                printf("Time limit exceeded at depth %d. Reverting to previous best move.\n", depth);
+                bestMove = bestMovePreviousDepth;
+                bestValue = bestValuePreviousDepth;
+                goto end_search;
+            }
+
+            m->score = score;
+
+            if (score > bestValue) {
+                bestValue = score;
+                bestMove = *m;
+            }
         }
+
+        bestMovePreviousDepth = bestMove;
+        bestValuePreviousDepth = bestValue;
+
+        end = clock();
+        cpu_time_used = ((double)(end - startTime)) / CLOCKS_PER_SEC;
+
+        printf("Depth %d: Best move has score %d (%c%d-%c%d)\n", depth, bestValue, colToFile(bestMove.from % 8), 8 - bestMove.from / 8, colToFile(bestMove.to % 8), 8 - bestMove.to / 8);
     }
-    if (bestValue == -INFINITY || bestValue == INFINITY) {
-        printf("WARNING: Best move has score %d\n", bestValue);
+
+end_search:
+    cpu_time_used = ((double)(clock() - startTime)) / CLOCKS_PER_SEC;
+    printf("Pruned %d nodes and searched %d nodes in %.2f seconds\n", prunedNodes, searchedNodes, cpu_time_used);
+
+    currentState = peek(stateHistory);
+    if (bestMove.from == -1 || bestMove.to == -1) {
+        printf("No valid moves found. Returning random move.\n");
+        int randomIndex = rand() % currentState->numValidMoves;
+        bestMove = moves[randomIndex];
+    } else {
+        printf("Best move has score %d\n", bestValue);
     }
-    printf("Best move has score %d\n", bestValue);
+
     return bestMove;
 }
+
+// int minimax(int depth, int alpha, int beta, int color) {
+//     // Check if the time limit has been exceeded
+//     if (((double)(clock() - startTime)) / CLOCKS_PER_SEC >= TIME_LIMIT) {
+//         timeExceeded = true;
+//         return 0;  // Return an arbitrary value
+//     }
+
+//     if (depth == 0 || isTerminalState()) {
+//         return taperedEval(currentState->bitboards, color);
+//     }
+
+//     Move* moves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+//     if (moves == NULL) {
+//         perror("malloc");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     searchedNodes++;
+//     getPseudoValidMoves(color, moves);
+//     int numPseudoMoves = currentState->numValidMoves;
+
+//     qsort(moves, numPseudoMoves, sizeof(Move), compareMoves);
+//     int bestScore = -INFINITY;
+
+//     for (int i = 0; i < numPseudoMoves; i++) {
+//         Move *m = &moves[i];
+//         if (m->from == -1 || m->to == -1) {
+//             break;
+//         }
+//         currentState = peek(stateHistory);
+
+//         makeMove(*m, 0);
+//         int score = -minimax(depth - 1, -beta, -alpha, !color);
+//         pop(stateHistory);
+
+//         if (timeExceeded) {  // Check if the search was interrupted due to time limit
+//             free(moves);
+//             return 0;  // Return an arbitrary value
+//         }
+
+//         if (score >= beta) {
+//             free(moves);
+//             prunedNodes++;
+//             return beta;
+//         }
+
+//         alpha = max(alpha, score);
+//         bestScore = max(bestScore, score);
+
+//         if (depth == 1 && bestScore == score) {
+//             bestMoveIterative = *m;
+//         }
+//     }
+
+//     currentState = peek(stateHistory);
+//     free(moves);
+//     return bestScore;
+// }
+
+// Move findBestMove(int maxDepth, int color, Move* moves) {
+//     Move bestMove = {-1, -1};
+//     int bestValue = -INFINITY;
+//     Move bestMovePreviousDepth = {-1, -1};  // Track the best move from the previous depth
+//     int bestValuePreviousDepth = -INFINITY;  // Track the best value from the previous depth
+
+//     startTime = clock();
+//     clock_t end;
+//     double cpu_time_used;
+
+//     for (int depth = 1; depth <= maxDepth; depth++) {
+//         bestValue = -INFINITY;
+//         int alpha = -INFINITY;
+//         int beta = INFINITY;
+//         timeExceeded = false;  // Reset the time exceeded flag
+//         // Sort moves by heuristic score
+//         qsort(moves, currentState->numValidMoves, sizeof(Move), compareMoves);
+
+//         for (int i = 0; i < currentState->numValidMoves; i++) {
+//             Move *m = &moves[i];
+//             if (m->from == -1 || m->to == -1) {
+//                 break;
+//             }
+//             currentState = peek(stateHistory);
+
+//             makeMove(*m, 0);
+//             int score = -minimax(depth - 1, alpha, beta, !color);
+//             pop(stateHistory);
+
+//             if (timeExceeded) {
+//                 printf("Time limit exceeded at depth %d. Reverting to previous best move.\n", depth);
+//                 bestMove = bestMovePreviousDepth;
+//                 bestValue = bestValuePreviousDepth;
+//                 goto end_search;  // Break out of all loops
+//             }
+
+//             m->score = score;
+//             if (score > bestValue) {
+//                 bestValue = score;
+//                 bestMove = *m;
+//             }
+//         }
+
+//         bestMovePreviousDepth = bestMove;
+//         bestValuePreviousDepth = bestValue;
+
+//         end = clock();
+//         cpu_time_used = ((double)(end - startTime)) / CLOCKS_PER_SEC;
+
+//         printf("Depth %d: Best move has score %d\n", depth, bestValue);
+//     }
+
+// end_search:
+//     cpu_time_used = ((double)(clock() - startTime)) / CLOCKS_PER_SEC;
+//     printf("Pruned %d nodes and searched %d nodes in %.2f seconds\n", prunedNodes, searchedNodes, cpu_time_used);
+
+//     currentState = peek(stateHistory);
+//     if (bestMove.from == -1 || bestMove.to == -1) {
+//         printf("No valid moves found. Returning random move.\n");
+//         int randomIndex = rand() % currentState->numValidMoves;
+//         bestMove = moves[randomIndex];
+//     } else {
+//         printf("Best move has score %d\n", bestValue);
+//     }
+
+//     return bestMove;
+// }
+
 
 int max(int a, int b) {
     return (a > b) ? a : b;

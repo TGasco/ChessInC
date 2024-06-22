@@ -52,26 +52,35 @@ void renderHighlight(SDL_Renderer* renderer, int x, int y) {
 }
 
 // New renderFrame uses bitboards directly, no need to pass the board array
-void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, Position* validMoves) {
+void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, int numValidMoves, Move* validMoves) {
     // Render the chess board
     renderBoard(*renderer);
-    // Render the valid moves - loop through the array of valid moves and render a highlight on each square
-    if (validMoves != NULL) {
-        int numValidMoves = 0;
-        for (int i = 0; i < 28; ++i) {
-            if (validMoves[i].row == -1 && validMoves[i].col == -1) {
-                break;
-            }
-            renderHighlight(*renderer, validMoves[i].col * SQUARE_SIZE, validMoves[i].row * SQUARE_SIZE);
-            numValidMoves++;
+    // // Render the valid moves - loop through the array of valid moves and render a highlight on each square
+    int move;
+    for (move = 0; move < numValidMoves; move++) {
+        if (validMoves[move].to == -1) {
+            break;
         }
+        int row = validMoves[move].to / BOARD_SIZE;
+        int col = validMoves[move].to % BOARD_SIZE;
+        renderHighlight(*renderer, col * SQUARE_SIZE, row * SQUARE_SIZE);
     }
+    // if (validMoves != NULL) {
+    //     int numValidMoves = 0;
+    //     for (int i = 0; i < 28; ++i) {
+    //         if (validMoves[i].row == -1 && validMoves[i].col == -1) {
+    //             break;
+    //         }
+    //         renderHighlight(*renderer, validMoves[i].col * SQUARE_SIZE, validMoves[i].row * SQUARE_SIZE);
+    //         numValidMoves++;
+    //     }
+    // }
 
     // Iterate over bitboards and render the pieces
     for (int pieceType = 1; pieceType < 13; pieceType++)
     {
         Piece piece = {pieceType % 6, pieceType < 7 ? WHITE : BLACK, pieceSprites[pieceType - 1]};
-        uint64_t bitboard = currentState.bitboards[pieceType];
+        uint64_t bitboard = currentState->bitboards[pieceType];
         while (bitboard) {
             int square = __builtin_ctzll(bitboard);
             bitboard &= bitboard - 1;

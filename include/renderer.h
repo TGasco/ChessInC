@@ -20,7 +20,8 @@ void renderPieceAtMouse(SDL_Renderer* renderer, Piece piece);
 void renderHighlight(SDL_Renderer* renderer, int x, int y);
 
 // void renderFrame(SDL_Renderer** renderer, Piece board[BOARD_SIZE][BOARD_SIZE], int selectedX, int selectedY, int isDragging, Position* validMoves);
-void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, Position* validMoves);
+// void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, Position* validMoves);
+void renderFrame(SDL_Renderer** renderer, int selectedX, int selectedY, int isDragging, int numValidMoves, Move* validMoves);
 
 int initRenderer(SDL_Window** window, SDL_Renderer** renderer);
 
