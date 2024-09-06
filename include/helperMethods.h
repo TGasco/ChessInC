@@ -19,4 +19,6 @@ Position squareToPos(int square);
 
 uint64_t indexToBitboard(int square);
 
+int countBits(uint64_t x);
+
 #endif // HELPERMETHODS_H

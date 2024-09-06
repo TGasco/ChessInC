@@ -14,7 +14,7 @@
 #include <transposition.h>
 
 #define INFINITY INT_MAX
-#define TIME_LIMIT 1.0
+#define TIME_LIMIT 1.5
 struct PieceValues pieceValues = {
     .values = {0, 1000, 3200, 3300, 5000, 9000, 200000}
 };
@@ -22,6 +22,13 @@ struct PieceValues pieceValues = {
 int evaluateMaterial(uint64_t* bitboards);
 int max(int a, int b);
 int min(int a, int b);
+
+int evaluateKingSafety(uint64_t* bitboards, int colour, int kingPos);
+int evaluatePawnStructure(uint64_t* bitboards, int colour, int pos);
+int evaluatePieceMobility(uint64_t* bitboards, int colour, int numMoves);
+int evaluatePieceCoordination(uint64_t* bitboards, int colour);
+int evaluateControlOfKeySquares(uint64_t* bitboards, int colour, int pos);
+int evaluateProximityToKing(uint64_t* bitboards, int colour, int pos);
 
 int searchedNodes = 0;
 int prunedNodes = 0;
@@ -212,77 +219,206 @@ int getManhattanDistance(int from, int to) {
 }
 
 int taperedEval(uint64_t* bitboards, int side) {
-    // printf("Boasrd state at eval\n");
-    // prettyPrintBitboard(bitboards[0]);
     int mid[2];
     int end[2];
+    int mobility[2];
+    int pawnStructure[2];
     int bonus = 0;
 
     mid[WHITE] = 0;
     mid[BLACK] = 0;
     end[WHITE] = 0;
     end[BLACK] = 0;
+    mobility[WHITE] = 0;
+    mobility[BLACK] = 0;
     int gamePhase = 0;
     int maxGamePhase = 24;
 
     uint64_t centreMask = 0x3C3C000000ULL;
-    int kingPos;
-    // Evaluate all pieces for each colour
-    for (int colour=WHITE; colour<=BLACK; colour++) {
-        kingPos = __builtin_ctzll(bitboards[colour == WHITE ? BLACK_KING : WHITE_KING]);
-        for (int piece=PAWN; piece<=KING; piece++) {
-            int bitboardIndex = getBitboardIndex(piece, colour);
+    int kingPos[2];
+    kingPos[WHITE] = __builtin_ctzll(bitboards[WHITE_KING]);
+    kingPos[BLACK] = __builtin_ctzll(bitboards[BLACK_KING]);
+    int kingProximity[2];
+    int coordinationScore[2];
+    int kingSafety[2];
 
+    Move* tmpMoves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+    if (tmpMoves == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    getPseudoValidMoves(!side, tmpMoves);
+    int numOpponentMoves = currentState->numValidMoves;
+    getPseudoValidMoves(side, tmpMoves);
+    int numPseudoMoves = currentState->numValidMoves;
+    free(tmpMoves);
+
+    for (int colour = WHITE; colour <= BLACK; colour++) {
+        if (isCheck(colour) && isCheckmate(colour)) {
+            return 200000 * (colour == side ? -1 : 1);
+        }
+        for (int piece = PAWN; piece <= KING; piece++) {
+            int bitboardIndex = getBitboardIndex(piece, colour);
             uint64_t bitboard = bitboards[bitboardIndex];
             int pieceType = piece + (colour * 6) - 1;
 
             while (bitboard) {
                 int pos = __builtin_ctzll(bitboard);
                 bitboard &= bitboard - 1;
-                // Check if square is attacked by opponent
-                // if (currentState->attackBitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB] & (1ULL << pos)) {
-                //     bonus -= (midValue[pieceType / 2]) * (colour == side ? 1 : -1);
-                // }
-                // Check if piece is protected by own piece
-                if (currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] & (1ULL << pos)) {
-                    bonus += (midValue[pieceType] / 10) * (colour == side ? 1 : -1);
+
+                kingProximity[colour] += evaluateProximityToKing(bitboards, colour, pos);
+
+                if (piece == PAWN) {
+                    pawnStructure[colour] += evaluatePawnStructure(bitboards, colour, pos);
                 }
 
-                // Get distace to opponent king
-                int distToKing = getManhattanDistance(pos, kingPos);
-                bonus += (8-distToKing) * 5 * (colour == side ? 1 : -1);
+                if (piece == KING) {
+                    kingSafety[colour] = evaluateKingSafety(bitboards, colour, pos);
+                }
 
                 mid[colour] += midTable[pieceType][pos];
                 end[colour] += endTable[pieceType][pos];
                 gamePhase += gamephaseInc[pieceType];
             }
         }
-        // Center control bonus
-        int centreControl = __builtin_popcountll(centreMask & bitboards[colour == WHITE ? WHITE_PAWN : BLACK_PAWN]);
 
-        bonus += centreControl * 2 * (colour == side ? 1 : -1);
-
-        // Mobility bonus: number of bits set in attack bitboard
-        bonus += __builtin_popcountll(currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB]) * (colour == side ? 1 : -1);
-
-
-        if (isCheck(!colour)) {
-            bonus += 250 * (colour == side ? 1 : -1);
-        }
+        // Calculate mobility, coordination, and control of key squares
+        kingProximity[colour] /= colour == WHITE ? countBits(bitboards[WHITE_GLOB]) : countBits(bitboards[BLACK_GLOB]);
+        mobility[colour] = evaluatePieceMobility(bitboards, colour, numPseudoMoves);
+        coordinationScore[colour] = evaluatePieceCoordination(bitboards, colour);
     }
-
-
-
-    int midScore = (mid[side]) - mid[!side];
-    int endScore = (end[side]) - end[!side];
+    int midScore = mid[side] - mid[!side];
+    int endScore = end[side] - end[!side];
+    int mobilityScore = mobility[side] - mobility[!side];
+    int proximityScore = kingProximity[side] - kingProximity[!side];
+    int structureScore = pawnStructure[side] - pawnStructure[!side];
+    int kingSafetyScore = kingSafety[side] - kingSafety[!side];
     int phase = gamePhase;
     if (phase > maxGamePhase) phase = maxGamePhase;
     int endPhase = maxGamePhase - phase;
-    return (((midScore * phase) + (endScore * endPhase)) / maxGamePhase) + bonus;
+    return (((((midScore * phase) + structureScore) + (endScore * endPhase)) / maxGamePhase)) + ((mobilityScore + proximityScore)) + (coordinationScore[side] - coordinationScore[!side]) + kingSafetyScore;
+}
+
+int evaluateProximityToKing(uint64_t* bitboards, int colour, int pos) {
+    int proximityScore = 0;
+    int kingPos = __builtin_ctzll(bitboards[colour == WHITE ? WHITE_KING : BLACK_KING]);
+    int distance = getManhattanDistance(kingPos, pos);
+    proximityScore += (4 - distance);
+    return proximityScore;
+}
+
+int evaluateKingSafety(uint64_t* bitboards, int colour, int kingPos) {
+    // Implement king safety evaluation
+    int kingSafetyPenalty = 0;
+    // Get king moves on an otherwise empty board
+    uint64_t kingMoves = getPseudoValidMove((Piece){KING, colour}, kingPos, colour, 0ULL);
+
+    // Check
+    if (isCheck(colour)) {
+        kingSafetyPenalty += 100;
+        if (isCheckmate(colour)) {
+            kingSafetyPenalty += INFINITY / 4;
+        }
+    }
+
+    // Count the number of attacks around the king position
+    int attacks = countBits(kingMoves & currentState->attackBitboards[PAWN + (!colour * 6)]);
+    attacks += countBits(kingMoves & currentState->attackBitboards[KNIGHT + (!colour * 6)]);
+    attacks += countBits(kingMoves & currentState->attackBitboards[BISHOP + (!colour * 6)]);
+    attacks += countBits(kingMoves & currentState->attackBitboards[ROOK + (!colour * 6)]);
+    attacks += countBits(kingMoves & currentState->attackBitboards[QUEEN + (!colour * 6)]);
+    attacks += countBits(kingMoves & currentState->attackBitboards[KING + (!colour * 6)]);
+    kingSafetyPenalty += attacks * 5;
+
+    // Count number of (opponent) pawns around the king
+    int pawns = countBits(kingMoves & currentState->bitboards[PAWN + (!colour * 6)]);
+    kingSafetyPenalty += pawns * 5;
+
+    // Grant a bonus for friendly pieces providing protection
+    int friendlyProtection = 0;
+    // Physical protection
+    friendlyProtection += countBits(kingMoves & currentState->bitboards[PAWN + (colour * 6)]);
+    kingSafetyPenalty -= friendlyProtection * 3;
+
+    // Attack protection
+    friendlyProtection += countBits(kingMoves & currentState->attackBitboards[PAWN + (colour * 6)]);
+    friendlyProtection += countBits(kingMoves & currentState->attackBitboards[KNIGHT + (colour * 6)]);
+    friendlyProtection += countBits(kingMoves & currentState->attackBitboards[BISHOP + (colour * 6)]);
+    friendlyProtection += countBits(kingMoves & currentState->attackBitboards[ROOK + (colour * 6)]);
+    friendlyProtection += countBits(kingMoves & currentState->attackBitboards[QUEEN + (colour * 6)]);
+
+    kingSafetyPenalty -= friendlyProtection * 2;
+
+    return kingSafetyPenalty;
+}
+
+int evaluatePawnStructure(uint64_t* bitboards, int colour, int pos) {
+    // Implement pawn structure evaluation
+    // Example: Penalize doubled, isolated, and backward pawns
+    uint64_t centreMask = 0x3C3C000000ULL;
+
+    int structureScore = 0;
+    // Doubled pawns
+    uint64_t doubledMask = 0x0101010101010101ULL << (pos % 8);
+    int doubledPawns = countBits(bitboards[PAWN + (colour * 6)] & doubledMask);
+    if (doubledPawns > 1) {
+        structureScore -= (doubledPawns - 1) * 3;
+    }
+    // Isolated pawns
+    uint64_t adjacentFilesMask = 0x0202020202020202ULL << (pos % 8) | 
+                                 0x4040404040404040ULL >> (7 - (pos % 8));
+    uint64_t adjacentPawns = bitboards[getBitboardIndex(PAWN, colour)] & adjacentFilesMask;
+    if (adjacentPawns == 0) {
+        structureScore -= 5;
+    }
+    // Backward pawns
+    int row = pos / 8;
+    int col = pos % 8;
+    if (row < 7) {
+        uint64_t aheadPawnsMask = 0xFFFFFFFFFFFFFF00ULL << (col);
+        uint64_t aheadPawns = bitboards[getBitboardIndex(PAWN, colour)] & aheadPawnsMask;
+        if (aheadPawns == 0) {
+            structureScore -= 5;  // Adjust the penalty as needed
+        }
+    }
+
+    // Bonus for passed pawns
+    uint64_t passedPawnsMask = 0xFFFFFFFFFFFFFFFFULL << (col);
+    uint64_t passedPawns = bitboards[getBitboardIndex(PAWN, colour)] & passedPawnsMask;
+    if (passedPawns == 0) {
+        structureScore += 5;  // Adjust the bonus as needed
+    }
+
+    // Bonus for pawns controlling the centre
+    if (bitboards[getBitboardIndex(PAWN, colour)] & centreMask) {
+        structureScore += 20;  // Adjust the bonus as needed
+    }
+
+    return structureScore;
+}
+
+int evaluatePieceMobility(uint64_t* bitboards, int colour, int numMoves) {
+    // Implement piece mobility evaluation
+    // Example: Count legal moves for the piece
+    int mobilityScore = 0;
+    mobilityScore += numMoves;
+    mobilityScore -= countBits(currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] & currentState->attackBitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB]);
+    return mobilityScore * 2;
+}
+
+int evaluatePieceCoordination(uint64_t* bitboards, int colour) {
+    // Implement piece coordination evaluation
+    // Example: Reward pieces defending each other
+    int coordinationScore = 0;
+    coordinationScore += countBits(bitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB] & currentState->attackBitboards[colour == WHITE ? WHITE_GLOB : BLACK_GLOB]) * 2;
+    return coordinationScore;
 }
 
 bool isTerminalState() {
-    return (isCheck(BLACK) && isCheckmate(BLACK)) || (isCheck(WHITE) && isCheckmate(WHITE));
+    if ((isCheck(BLACK) && isCheckmate(BLACK)) || (isCheck(WHITE) && isCheckmate(WHITE))) {
+        printf("Terminal state reached\n");
+        return true;
+    }
 }
 
 // Compare function for qsort (Move Ordering)
@@ -290,7 +426,7 @@ int compareMoves(const void* a, const void* b) {
     return ((Move*)b)->score - ((Move*)a)->score;
 }
 
-int minimax(int depth, int alpha, int beta, int color) {
+int negamax(int depth, int alpha, int beta, int color, int pov) {
     if (((double)(clock() - startTime)) / CLOCKS_PER_SEC >= TIME_LIMIT) {
         timeExceeded = true;
         return 0;
@@ -299,14 +435,16 @@ int minimax(int depth, int alpha, int beta, int color) {
     uint64_t zobristKey = generateZobristKey(currentState);
     int ttValue;
     Move ttBestMove;
-    if (probeTranspositionTable(zobristKey, depth, alpha, beta, &ttValue, &ttBestMove)) {
-        return ttValue;
-    }
+
+    // if (probeTranspositionTable(zobristKey, depth, alpha, beta, &ttValue, &ttBestMove, color)) {
+    //     printf("TT Hit %d\n", ttValue);
+    //     return ttValue * pov;
+    // }
 
     if (depth == 0 || isTerminalState()) {
-        int eval = taperedEval(&currentState->bitboards, color);
-        storeInTranspositionTable(zobristKey, depth, eval, (Move){-1, -1}, 0);
-        return eval;
+        int eval = taperedEval(currentState->bitboards, color);
+        storeInTranspositionTable(zobristKey, depth, eval, (Move){-1, -1}, 0, color);
+        return eval * pov;
     }
 
     Move* moves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
@@ -316,83 +454,85 @@ int minimax(int depth, int alpha, int beta, int color) {
     }
 
     searchedNodes++;
+    Move* opponentMoves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+    if (opponentMoves == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    getPseudoValidMoves(!color, opponentMoves);
+    int numOpponentMoves = currentState->numValidMoves;
     getPseudoValidMoves(color, moves);
     int numPseudoMoves = currentState->numValidMoves;
 
+
     qsort(moves, numPseudoMoves, sizeof(Move), compareMoves);
-    int bestScore = -INFINITY / 2;
     Move bestMove = {-1, -1};
     int flag = 1;  // Alpha flag
 
     for (int i = 0; i < numPseudoMoves; i++) {
         Move *m = &moves[i];
-        if (m->from == -1 || m->to == -1) {
-            break;
+        makeMove(*m, 0);
+        int score = -negamax(depth - 1, -beta, -alpha, !color, -pov);
+        // Update score
+        m->score = score;
+
+        if (score > alpha) {
+            alpha = score;
+            bestMove = *m;
+        } else {
+            flag = 0;  // Exact flag
         }
+
+        // Undo the move and restore the board state
+        pop(stateHistory);
         currentState = peek(stateHistory);
 
-        makeMove(*m, 0);
-        int score = -minimax(depth - 1, -beta, -alpha, !color);
-        pop(stateHistory);
-
-        if (timeExceeded) {
+        if (alpha >= beta) {
+            storeInTranspositionTable(zobristKey, depth, beta, bestMove, 2, color);  // Beta flag
             free(moves);
-            return 0;
-        }
-
-        if (score >= beta) {
-            storeInTranspositionTable(zobristKey, depth, beta, bestMove, 2);  // Beta flag
-            free(moves);
+            free(opponentMoves);
             prunedNodes++;
             return beta;
         }
 
-        if (score > bestScore) {
-            bestScore = score;
-            bestMove = *m;
+        if (timeExceeded) {
+            free(moves);
+            free(opponentMoves);
+            return 0;
         }
-
-        alpha = max(alpha, score);
     }
 
-    if (bestScore > alpha) {
-        flag = 0;  // Exact flag
-    }
-
-    storeInTranspositionTable(zobristKey, depth, bestScore, bestMove, flag);
-    currentState = peek(stateHistory);
+    storeInTranspositionTable(zobristKey, depth, alpha, bestMove, flag, color);
     free(moves);
-    return bestScore;
+    free(opponentMoves);
+    return alpha;
 }
 
 Move findBestMove(int maxDepth, int color, Move* moves) {
     Move bestMove = {-1, -1};
     int bestValue = -INFINITY;
-    Move bestMovePreviousDepth = {-1, -1};
-    int bestValuePreviousDepth = -INFINITY;
+    Move bestMovePreviousDepth = bestMove;
+    int bestValuePreviousDepth = bestValue;
 
     startTime = clock();
     clock_t end;
     double cpu_time_used;
 
     for (int depth = 1; depth <= maxDepth; depth++) {
-        bestValue = -INFINITY / 2;
+        bestValue = -INFINITY;
         int alpha = -INFINITY;
         int beta = INFINITY;
         timeExceeded = false;
+        currentState = peek(stateHistory);
         // Sort moves by heuristic score
         qsort(moves, currentState->numValidMoves, sizeof(Move), compareMoves);
 
         for (int i = 0; i < currentState->numValidMoves; i++) {
             Move *m = &moves[i];
-            if (m->from == -1 || m->to == -1) {
-                break;
-            }
-            currentState = peek(stateHistory);
-
             makeMove(*m, 0);
-            int score = -minimax(depth - 1, alpha, beta, !color);
+            int score = -negamax(depth - 1, alpha, beta, !color, -1);
             pop(stateHistory);
+            currentState = peek(stateHistory);
 
             if (timeExceeded) {
                 printf("Time limit exceeded at depth %d. Reverting to previous best move.\n", depth);
@@ -407,6 +547,8 @@ Move findBestMove(int maxDepth, int color, Move* moves) {
                 bestValue = score;
                 bestMove = *m;
             }
+
+            alpha = max(alpha, score);
         }
 
         bestMovePreviousDepth = bestMove;
@@ -422,145 +564,11 @@ end_search:
     cpu_time_used = ((double)(clock() - startTime)) / CLOCKS_PER_SEC;
     printf("Pruned %d nodes and searched %d nodes in %.2f seconds\n", prunedNodes, searchedNodes, cpu_time_used);
 
-    currentState = peek(stateHistory);
-    if (bestMove.from == -1 || bestMove.to == -1) {
-        printf("No valid moves found. Returning random move.\n");
-        int randomIndex = rand() % currentState->numValidMoves;
-        bestMove = moves[randomIndex];
-    } else {
-        printf("Best move has score %d\n", bestValue);
-    }
+    // currentState = peek(stateHistory);
+    printf("Best move has score %d\n", bestValue);
 
     return bestMove;
 }
-
-// int minimax(int depth, int alpha, int beta, int color) {
-//     // Check if the time limit has been exceeded
-//     if (((double)(clock() - startTime)) / CLOCKS_PER_SEC >= TIME_LIMIT) {
-//         timeExceeded = true;
-//         return 0;  // Return an arbitrary value
-//     }
-
-//     if (depth == 0 || isTerminalState()) {
-//         return taperedEval(currentState->bitboards, color);
-//     }
-
-//     Move* moves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
-//     if (moves == NULL) {
-//         perror("malloc");
-//         exit(EXIT_FAILURE);
-//     }
-
-//     searchedNodes++;
-//     getPseudoValidMoves(color, moves);
-//     int numPseudoMoves = currentState->numValidMoves;
-
-//     qsort(moves, numPseudoMoves, sizeof(Move), compareMoves);
-//     int bestScore = -INFINITY;
-
-//     for (int i = 0; i < numPseudoMoves; i++) {
-//         Move *m = &moves[i];
-//         if (m->from == -1 || m->to == -1) {
-//             break;
-//         }
-//         currentState = peek(stateHistory);
-
-//         makeMove(*m, 0);
-//         int score = -minimax(depth - 1, -beta, -alpha, !color);
-//         pop(stateHistory);
-
-//         if (timeExceeded) {  // Check if the search was interrupted due to time limit
-//             free(moves);
-//             return 0;  // Return an arbitrary value
-//         }
-
-//         if (score >= beta) {
-//             free(moves);
-//             prunedNodes++;
-//             return beta;
-//         }
-
-//         alpha = max(alpha, score);
-//         bestScore = max(bestScore, score);
-
-//         if (depth == 1 && bestScore == score) {
-//             bestMoveIterative = *m;
-//         }
-//     }
-
-//     currentState = peek(stateHistory);
-//     free(moves);
-//     return bestScore;
-// }
-
-// Move findBestMove(int maxDepth, int color, Move* moves) {
-//     Move bestMove = {-1, -1};
-//     int bestValue = -INFINITY;
-//     Move bestMovePreviousDepth = {-1, -1};  // Track the best move from the previous depth
-//     int bestValuePreviousDepth = -INFINITY;  // Track the best value from the previous depth
-
-//     startTime = clock();
-//     clock_t end;
-//     double cpu_time_used;
-
-//     for (int depth = 1; depth <= maxDepth; depth++) {
-//         bestValue = -INFINITY;
-//         int alpha = -INFINITY;
-//         int beta = INFINITY;
-//         timeExceeded = false;  // Reset the time exceeded flag
-//         // Sort moves by heuristic score
-//         qsort(moves, currentState->numValidMoves, sizeof(Move), compareMoves);
-
-//         for (int i = 0; i < currentState->numValidMoves; i++) {
-//             Move *m = &moves[i];
-//             if (m->from == -1 || m->to == -1) {
-//                 break;
-//             }
-//             currentState = peek(stateHistory);
-
-//             makeMove(*m, 0);
-//             int score = -minimax(depth - 1, alpha, beta, !color);
-//             pop(stateHistory);
-
-//             if (timeExceeded) {
-//                 printf("Time limit exceeded at depth %d. Reverting to previous best move.\n", depth);
-//                 bestMove = bestMovePreviousDepth;
-//                 bestValue = bestValuePreviousDepth;
-//                 goto end_search;  // Break out of all loops
-//             }
-
-//             m->score = score;
-//             if (score > bestValue) {
-//                 bestValue = score;
-//                 bestMove = *m;
-//             }
-//         }
-
-//         bestMovePreviousDepth = bestMove;
-//         bestValuePreviousDepth = bestValue;
-
-//         end = clock();
-//         cpu_time_used = ((double)(end - startTime)) / CLOCKS_PER_SEC;
-
-//         printf("Depth %d: Best move has score %d\n", depth, bestValue);
-//     }
-
-// end_search:
-//     cpu_time_used = ((double)(clock() - startTime)) / CLOCKS_PER_SEC;
-//     printf("Pruned %d nodes and searched %d nodes in %.2f seconds\n", prunedNodes, searchedNodes, cpu_time_used);
-
-//     currentState = peek(stateHistory);
-//     if (bestMove.from == -1 || bestMove.to == -1) {
-//         printf("No valid moves found. Returning random move.\n");
-//         int randomIndex = rand() % currentState->numValidMoves;
-//         bestMove = moves[randomIndex];
-//     } else {
-//         printf("Best move has score %d\n", bestValue);
-//     }
-
-//     return bestMove;
-// }
-
 
 int max(int a, int b) {
     return (a > b) ? a : b;
@@ -568,55 +576,4 @@ int max(int a, int b) {
 
 int min(int a, int b) {
     return (a < b) ? a : b;
-}
-
-
-int evaluateMaterial(uint64_t* bitboards) {
-    // Evaluate the material on the board
-    int score = 0;
-
-    for (int colour = 0; colour < 2; colour++) {
-        for (int pieceType = 1; pieceType < 7; pieceType++) {
-            int bitboardIndex = getBitboardIndex(pieceType, colour);
-
-            uint64_t bitboard = bitboards[bitboardIndex];
-            while (bitboard) {
-                int pos = __builtin_ctzll(bitboard);
-                bitboard &= bitboard - 1;
-                // int posBonus = taperedEval(pieceType, colour, pos, gamePhase);
-                int posBonus = 0;
-                printf("Pos bonus: %d\n", posBonus);
-                switch (pieceType) {
-                    case PAWN:
-                        // score += (pieceValues.values[PAWN] + pawnPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        score += (pieceValues.values[PAWN] + posBonus) * (colour == WHITE ? 1 : -1);
-                        break;
-                    case KNIGHT:
-                        score += (pieceValues.values[KNIGHT] + posBonus) * (colour == WHITE ? 1 : -1);
-                        // score += (pieceValues.values[KNIGHT] + knightPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        break;
-                    case BISHOP:
-                        score += (pieceValues.values[BISHOP] + posBonus) * (colour == WHITE ? 1 : -1);
-                        // score += (pieceValues.values[BISHOP] + bishopPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        break;
-                    case ROOK:
-                        score += (pieceValues.values[ROOK] + posBonus) * (colour == WHITE ? 1 : -1);
-                        // score += (pieceValues.values[ROOK] + rookPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        break;
-                    case QUEEN:
-                        score += (pieceValues.values[QUEEN] + posBonus) * (colour == WHITE ? 1 : -1);
-                        // score += (pieceValues.values[QUEEN] + queenPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        break;
-                    case KING:
-                        score += (pieceValues.values[KING] + posBonus) * (colour == WHITE ? 1 : -1);
-                        // score += (pieceValues.values[KING] + kingPieceTable[colour][pos]) * (colour == WHITE ? 1 : -1);
-                        break;
-                    default:
-                        break;
-                }
-            }
-        }
-    }
-
-    return score;
 }

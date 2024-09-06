@@ -1,4 +1,4 @@
-#include <stdint.h>
+ #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -21,20 +21,21 @@ void freeTranspositionTable() {
     free(transpositionTable);
 }
 
-int probeTranspositionTable(uint64_t zobristKey, int depth, int alpha, int beta, int* value, Move* bestMove) {
+int probeTranspositionTable(uint64_t zobristKey, int depth, int alpha, int beta, int* value, Move* bestMove, int color) {
     int index = zobristKey % TABLE_SIZE;
     TTEntry* entry = &transpositionTable[index];
 
     if (entry->zobristKey == zobristKey) {
         if (entry->depth >= depth) {
+            int ttValue = entry->value;
+
             if (entry->flag == 0) {  // Exact
-                *value = entry->value;
-                *bestMove = entry->bestMove;
+                *value = ttValue;
                 return 1;
-            } else if (entry->flag == 1 && entry->value <= alpha) {  // Alpha
+            } else if (entry->flag == 1 && ttValue <= alpha) {  // Alpha
                 *value = alpha;
                 return 1;
-            } else if (entry->flag == 2 && entry->value >= beta) {  // Beta
+            } else if (entry->flag == 2 && ttValue >= beta) {  // Beta
                 *value = beta;
                 return 1;
             }
@@ -43,7 +44,8 @@ int probeTranspositionTable(uint64_t zobristKey, int depth, int alpha, int beta,
     return 0;
 }
 
-void storeInTranspositionTable(uint64_t zobristKey, int depth, int value, Move bestMove, int flag) {
+
+void storeInTranspositionTable(uint64_t zobristKey, int depth, int value, Move bestMove, int flag, int color) {
     int index = zobristKey % TABLE_SIZE;
     TTEntry* entry = &transpositionTable[index];
 
@@ -52,4 +54,6 @@ void storeInTranspositionTable(uint64_t zobristKey, int depth, int value, Move b
     entry->value = value;
     entry->bestMove = bestMove;
     entry->flag = flag;
+    entry->color = color;
+    // printf("Stored in transposition table: value = %d, depth = %d, flag = %d, color = %d\n", transpositionTable[index].value, transpositionTable[index].depth, transpositionTable[index].flag, transpositionTable[index].color);
 }

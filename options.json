@@ -1,0 +1,38 @@
+{
+    "target": "./bin/chess",
+    "prerequisites": ["make"],
+    "options": [
+      {
+        "aliases": ["-ai"],
+        "description": "AI vs AI (No player input)",
+        "requires_arg": false
+      },
+      {
+        "aliases": ["--pvp"],
+        "description": "2-Player mode (Player vs Player)",
+        "requires_arg": false
+      },
+      {
+        "aliases": ["-b", "--black"],
+        "description": "Play as the black player. (Default is white)",
+        "requires_arg": false
+      },
+      {
+        "aliases": ["-r", "--random"],
+        "description": "Randomize the player colours.",
+        "requires_arg": false
+      },
+      {
+        "aliases": ["-l", "--load"],
+        "description": "Load a board state from file (FEN format). (Example: `./chess -l queens_gambit.txt`)",
+        "requires_arg": true,
+        "arg_type": "file",
+        "allowed_extensions": [".txt"]
+      },
+      {
+        "aliases": ["-h", "--help"],
+        "description": "Display the help message.",
+        "requires_arg": false
+      }
+    ]
+  }

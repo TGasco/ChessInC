@@ -10,4 +10,4 @@ make
 echo "Running the C executable..."
 
 # Run the C executable with the given arguments
-./bin/chess "$@"
+.driver.sh "$@"

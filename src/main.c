@@ -13,7 +13,8 @@
 #include <zobrist.h>
 #include <transposition.h>
 
-#define MAX_DEPTH 25 // Maximum depth for the minimax algorithm
+#define MAX_DEPTH 99 // Maximum depth for the negamax algorithm
+
 // Global running time variables
 int running = 1;
 int turnCounter = 0;
@@ -25,8 +26,13 @@ int mouseY = 0;
 int isDragging = 0;
 int turnStart = 1;
 Move* validMoves;
-int playerColour = WHITE;
+
+// Game state variables (changable via command line arguments)
+int playerColour = WHITE; // Default player colour is white
 int aiOnly = 0;
+int noAi = 0;
+char fen[256] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
+
 // Renderer variables
 SDL_Window* window = NULL;
 SDL_Renderer* renderer = NULL;
@@ -34,17 +40,59 @@ SDL_Renderer* renderer = NULL;
 void endTurn();
 
 void parseArgs(int argc, char* argv[]) {
-    char* validArgs[] = {"-ai", "-b"};
+    char* validArgs[] = {"-ai",  // 0: AI only (no human player)
+                         "--pvp", // 1: Player vs. player
+                         "-b", "--black", // 2/3: Player is black
+                         "-r", "--random", // 4/5: Colour is random
+                         "-l", "--load" // 6/7: Load position from file (FEN)
+                         };
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {
+            // Check for AI only flag
             if (strcmp(argv[i], validArgs[0]) == 0) {
                 aiOnly = 1;
-            } else if (strcmp(argv[i], validArgs[1]) == 0) {
                 playerColour = BLACK;
+            } else if (strcmp(argv[i], validArgs[1]) == 0) {
+                // No AI flag (2-player game)
+                noAi = 1;
+            } else if (strcmp(argv[i], validArgs[2]) == 0 || strcmp(argv[i], validArgs[3]) == 0) {
+                playerColour = BLACK;
+            } else if (strcmp(argv[i], validArgs[4]) == 0 || strcmp(argv[i], validArgs[5]) == 0) {
+                // Randomise player colour
+                printf("Randomising player colour.\n");
+                playerColour = (rand() + rand()) % 2;
+            } else if (strcmp(argv[i], validArgs[6]) == 0 || strcmp(argv[i], validArgs[7]) == 0) {
+                // Load FEN from file
+                if (i + 1 < argc) {
+                    // Open the file
+                    printf("Loading FEN from file: %s\n", argv[i + 1]);
+                    FILE* file = fopen(argv[i + 1], "r");
+                    if (file == NULL) {
+                        perror("fopen");
+                        printf("Failed to open file");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    // Read the FEN string from the file
+                    char line[256];
+                    if (fgets(line, sizeof(line), file) != NULL) {
+                        line[strcspn(line, "\n")] = '\0'; // Remove newline character if present
+                        strncpy(fen, line, sizeof(fen) - 1);
+                        fen[sizeof(fen) - 1] = '\0'; // Ensure null-termination
+                    } else {
+                        printf("Error reading FEN from file.\n");
+                        fclose(file);
+                        exit(EXIT_FAILURE);
+                    }
+                    fclose(file);
+                } else {
+                    printf("Error: No file path provided for %s argument.\n", argv[i]);
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }
-};
+}
 
 void resetValidMoves() {
     for (int i = 0; i < TOTAL_POSSIBLE_MOVES; i++) {
@@ -56,13 +104,15 @@ void resetValidMoves() {
 
 int main(int argc, char* argv[]) {
     // Setup of game state
+    // Set the random seed
+    srand(time(NULL)); // Seed the random number generator
     // Parse command line arguments
     parseArgs(argc, argv);
     // Allocate memory for the valid moves lookup table
     validMoves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
     // Allocate memory for the current state pointer
     currentState = malloc(sizeof(BoardState));
-    resetValidMoves();
+    // resetValidMoves();
     // Print the board (for debugging purposes)
     initRenderer(&window, &renderer);
 
@@ -70,8 +120,6 @@ int main(int argc, char* argv[]) {
     printf("Initialising state history stack.\n");
     stateHistory = createStack(sizeof(BoardState), 256);
 
-    char fen[] = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
-    // char fen[] = "q2r1rk1/1p1b1ppp/p1nppn2/8/2P1P3/2N2N2/PP2BPPP/R2Q1RK1";
     int sideToMove;
     char* fenPtr = fen;
 
@@ -111,9 +159,9 @@ int main(int argc, char* argv[]) {
         // Exit if the ESC key is pressed
         if (turnStart) {
             // Retrieve top of stack
+            currentState = peek(stateHistory);
             turnCounter++;
             sideToMove = !(turnCounter % 2);
-
             printf("Turn %d: %c to move.\n", currentState->halfMoveClock, currentState->sideToMove == 0 ? 'w' : 'b');
             getPseudoValidMoves(!sideToMove, validMoves);
             resetValidMoves();
@@ -127,7 +175,7 @@ int main(int argc, char* argv[]) {
                 // Print the check bitboard
                 prettyPrintBitboard(currentState->checkBitboard);
                 if (currentState->numValidMoves == 0) {
-                    printf("Checkmate!\n");
+                    printf("Checkmate! %c wins!\n", sideToMove == WHITE ? 'b' : 'w');
                     running = 0;
                     break; // Exit the game
                 }
@@ -136,12 +184,9 @@ int main(int argc, char* argv[]) {
                 running = 0;
                 break; // Exit the game
             }
-            
-            prettyPrintBitboard(currentState->bitboards[GLOBAL]);
-            printf("Castling rights: %d\n", currentState->castleRights);
 
-            // run minimax algorithm if it's the AI's turn
-            if ((sideToMove == !playerColour || aiOnly) && running) {
+            // run negamax algorithm if it's the AI's turn
+            if ((sideToMove == !playerColour || aiOnly) && !noAi && running) {
                 Move bestMove = findBestMove(MAX_DEPTH, sideToMove, validMoves);
                 if (bestMove.from == -1 || bestMove.to == -1) {
                     printf("No valid moves found! Probably checkmate, or there's a bug in the code.\n");
@@ -160,8 +205,7 @@ int main(int argc, char* argv[]) {
             } else {
             }
 
-            if (playerColour == sideToMove && !aiOnly) turnStart = 0;
-            // turnStart = 0;
+            if ((playerColour == sideToMove && !aiOnly) || noAi) turnStart = 0;
         }
 
         SDL_Event event;
@@ -254,7 +298,5 @@ void endTurn() {
     currentState->halfMoveClock++;
     currentState->sideToMove = (currentState->sideToMove == WHITE) ? BLACK : WHITE;
     // Reset check state
-    // Reset the check state
-    currentState->checkBitboard = 0xFFFFFFFFFFFFFFFFULL;
     currentState->doubleCheck = 0;
 }

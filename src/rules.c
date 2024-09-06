@@ -191,11 +191,20 @@ int makeMove(Move move, int simulate) {
     // Check if the move is a capture
     int capture = isCapture(destBitboard, move.piece.color, move.piece.type);
     if (capture) {
+        int boardIndex = getBoardAtIndex(move.to, !move.piece.color);
+        // Remove castling rights if the rook is captured
+        if (boardIndex%6 == ROOK) {
+            if (move.to == 7 || move.to == 56) {
+                currentState->castleRights &= ~(move.piece.color ? WHITE_QUEENSIDE : BLACK_QUEENSIDE);
+            } else if (move.to == 0 || move.to == 63) {
+                currentState->castleRights &= ~(move.piece.color ? WHITE_KINGSIDE : BLACK_KINGSIDE);
+            }
+        }
         // Get the piece at the destination
         if (move.piece.type == PAWN && (destBitboard & currentState->enPassantMask) != 0ULL) {
             removePiece(&currentState->bitboards[1 + (!(move.piece.color) * 6)], (1ULL << (move.to + (move.piece.color ? -8 : 8))));
         } else {
-            removePiece(&currentState->bitboards[getBoardAtIndex(move.to, !move.piece.color)], destBitboard);
+            removePiece(&currentState->bitboards[boardIndex], destBitboard);
         }
     }
 

@@ -15,8 +15,9 @@ void initLookups();
 bool isAttacked(uint64_t bitboard, int colour);
 int getPieceValue (int pieceType);
 int getMoveScore(Move move);
-uint64_t getPinnedPieces(int colour);
-int getDirection(int squareA, int squareB);
+// uint64_t getPinnedPieces(int colour);
+void getPinnedPieces(uint64_t *pinned, uint64_t *pinners, int colour);
+uint64_t restrictPinnedPieceMovement(uint64_t pinnedPiece, uint64_t pinner, uint64_t king, uint64_t (*attackMask)(uint64_t, int));
 
 void initPawnLookup() {
     uint64_t pawnTwoStepMaskW = 0xFF00000000ULL;
@@ -153,6 +154,9 @@ void initLookups() {
 
 
 int canCastle(int color, int side) {
+    if (isCheck(color)) {
+        return 0;
+    }
     switch(side) {
         case 0: // Kingside
             if ((currentState->castleRights & (color ? BLACK_KINGSIDE : WHITE_KINGSIDE)) == 0) return 0;
@@ -167,11 +171,9 @@ int canCastle(int color, int side) {
     }
 }
 
-// TODO: Fix castling rights
-uint64_t getPseudoValidMove(Piece piece, int square, int colour) {
+uint64_t getPseudoValidMove(Piece piece, int square, int colour, uint64_t occ) {
     // Generate pseudo-legal moves for the given piece
     uint64_t moves = 0ULL;
-    uint64_t bitboardNoKing = currentState->bitboards[0] & ~(currentState->bitboards[(getBitboardIndex(KING, !colour))]);
     switch(piece.type) {
         case PAWN:
             moves = generatePawnMoveOTF(square, piece.color);
@@ -180,13 +182,13 @@ uint64_t getPseudoValidMove(Piece piece, int square, int colour) {
             moves = knightAttackLookup[square];
             break;
         case BISHOP:
-            moves = getBishopAttacks(square, bitboardNoKing);
+            moves = getBishopAttacks(square, occ);
             break;
         case ROOK:
-            moves = getRookAttacks(square, bitboardNoKing);
+            moves = getRookAttacks(square, occ);
             break;
         case QUEEN:
-            moves = (getRookAttacks(square, bitboardNoKing) | getBishopAttacks(square, bitboardNoKing));
+            moves = (getRookAttacks(square, occ) | getBishopAttacks(square, occ));
             break;
         case KING:
             moves = kingAttackLookup[square]; // Get normal king moves
@@ -204,8 +206,6 @@ uint64_t getPseudoValidMove(Piece piece, int square, int colour) {
                 // printf("Can castle queenside\n");
                 moves |= 1ULL << (square - 2);
             }
-            // Remove moves that put the king in check
-            moves &= ~currentState->attackBitboards[piece.color == WHITE ? BLACK_GLOB : WHITE_GLOB];
             break;
         default:
             printf("Invalid piece type: %d\n", piece.type);
@@ -218,15 +218,24 @@ uint64_t getPseudoValidMove(Piece piece, int square, int colour) {
 void getPseudoValidMoves(int colour, Move* moves) {
     currentState->numValidMoves = 0; // Reset the number of valid moves
     int numValidMoves = 0;
-
-    uint64_t pinnedPieces = getPinnedPieces(colour);
+    uint64_t pinnedPieces = 0ULL;
+    uint64_t pinners = 0ULL;
+    getPinnedPieces(&pinnedPieces, &pinners, colour);
+    uint64_t validSquares = currentState->checkBitboard;
+    // if (pinnedPieces != 0ULL) {
+    //     printf("Pinners\n");
+    //     prettyPrintBitboard(pinners);
+    //     printf("Pinned pieces\n");
+    //     prettyPrintBitboard(pinnedPieces);
+    // }
     int kingSquare = __builtin_ctzll(currentState->bitboards[getBitboardIndex(KING, colour)]);
     uint64_t xRayOrth = getRookAttacks(kingSquare, indexToBitboard(kingSquare));
     uint64_t xRayDiag = getBishopAttacks(kingSquare, indexToBitboard(kingSquare));
     uint64_t pieceRay = 0ULL;
-    uint64_t validSquares = currentState->checkBitboard;
-    uint64_t validSquares2 = currentState->checkBitboard;
-    int check = isCheck(colour);
+    // // uint64_t validSquares2 = currentState->checkBitboard;
+    uint64_t bitboardNoKing = currentState->bitboards[0] & ~(currentState->bitboards[(getBitboardIndex(KING, !colour))]);
+    // uint64_t kingOnlyBoard = currentState->bitboards[getBitboardIndex(KING, !colour)];
+    // int check = isCheck(colour);
 
     for (int pieceType=1; pieceType<7; pieceType++) {
         // reset the attack bitboard
@@ -242,56 +251,35 @@ void getPseudoValidMoves(int colour, Move* moves) {
                 if (xRayDiag & (1ULL << square)) {
                     // Get XRay for the piece (bishop)
                     // printf("Piece on square %d is pinned along a diagonal\n", square);
-                    pieceRay = getBishopAttacks(square, indexToBitboard(square));
+                    pieceRay = getBishopAttacks(square, indexToBitboard(kingSquare));
                     validSquares &= pieceRay & xRayDiag;
                 } else if (xRayOrth & (1ULL << square)) {
                     // Get XRay for the piece (rook)
                     // printf("Piece on square %d is pinned along a file or rank\n", square);
-                    pieceRay = getRookAttacks(square, indexToBitboard(square));
+                    pieceRay = getRookAttacks(square, indexToBitboard(kingSquare));
                     validSquares &= pieceRay & xRayOrth;
                 } else {
                     // printf("ERR");
                 }
             }
 
-            uint64_t move = getPseudoValidMove((Piece){pieceType, colour}, square, colour);
+            uint64_t move = getPseudoValidMove((Piece){pieceType, colour}, square, colour, bitboardNoKing);
+            if (pieceType == KING) {
+                // Hotfix: prevent King from attacking opponent King
+                int opponentKingPos = __builtin_ctzll(currentState->bitboards[getBitboardIndex(KING, !colour)]);
+                uint64_t opponentKingMoves = kingAttackLookup[opponentKingPos];
+                move &= ~opponentKingMoves;
+
+                // Remove moves that put the king in check
+                move &= ~currentState->attackBitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB];
+            }
+
             pieceBitboard &= pieceBitboard - 1;
             // Skip if move is not within the valid squares
-            if (pieceType != KING) {
+            if (pieceType != KING && move != 0ULL) {
                 move &= validSquares;
                 if (move == 0ULL) {
                     continue;
-                }
-            }
-
-
-            // Does the move attack the enemy king?
-            if (move & currentState->bitboards[getBitboardIndex(KING, !colour)]) {
-                // If checkBitboard is already set, the king is in double check
-                if (validSquares2 != 0xFFFFFFFFFFFFFFFFULL) {
-                    // Double check
-                    currentState->doubleCheck = 1;
-                    continue;
-                }
-                // Add piece to the check bitboard
-                validSquares2 = indexToBitboard(square);
-
-                // If piece is a slider, add the ray to the check bitboard
-                if (pieceType == BISHOP || pieceType == ROOK || pieceType == QUEEN) {
-                    int oppKingSquare = __builtin_ctzll(currentState->bitboards[getBitboardIndex(KING, !colour)]);
-                    uint64_t oppRayDiag = getBishopAttacks(oppKingSquare, currentState->bitboards[0]);
-                    uint64_t oppRayOrth = getRookAttacks(oppKingSquare, currentState->bitboards[0]);
-                   
-                    // Get check direction
-                    if (oppRayDiag & (1ULL << square)) {
-                        // Get XRay for the piece (bishop)
-                        validSquares2 |= (move & oppRayDiag);
-                    } else if (oppRayOrth & (1ULL << square)) {
-                        // Get XRay for the piece (rook)
-                        validSquares2 |= (move & oppRayOrth);
-                    } else {
-                        // printf("ERR");
-                    }
                 }
             }
 
@@ -321,75 +309,97 @@ void getPseudoValidMoves(int colour, Move* moves) {
     }
     updateBitboards();
     currentState->numValidMoves = numValidMoves;
-    currentState->checkBitboard = validSquares2;
-    // printf("Valid squares: \n");
-    // prettyPrintBitboard(validSquares);
-    // printf("\n");
 }
 
-uint64_t getPinnedPieces(int colour) {
+void getPinnedPieces(uint64_t *pinned, uint64_t *pinners, int colour) {
+    *pinned = 0ULL; // Reset the pinned pieces bitboard
+    currentState->checkBitboard = 0xFFFFFFFFFFFFFFFFULL;
+    uint64_t *kingBitboard = &(currentState->bitboards[getBitboardIndex(KING, colour)]);
+    uint64_t (*directions[2])(int, uint64_t) = {&getRookAttacks, &getBishopAttacks};
+    uint64_t opponentSlider[2] = {currentState->bitboards[getBitboardIndex(ROOK, !colour)] | currentState->bitboards[getBitboardIndex(QUEEN, !colour)], currentState->bitboards[getBitboardIndex(BISHOP, !colour)] | currentState->bitboards[getBitboardIndex(QUEEN, !colour)]};
+    uint64_t kingXRayOrth = getRookAttacks(__builtin_ctzll(*kingBitboard), currentState->bitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB]);
+    uint64_t kingXRayDiag = getBishopAttacks(__builtin_ctzll(*kingBitboard), currentState->bitboards[colour == WHITE ? BLACK_GLOB : WHITE_GLOB]);
 
-    // TEMP: REGET queen attacks for the opposite colour, split into rook and bishop attacks
-    // Loop over queen bitboard
-    // For each queen, get the rook and bishop attacks
-    uint64_t queenBitboard = currentState->bitboards[getBitboardIndex(QUEEN, !colour)];
-    uint64_t queenAttacksOrth = 0ULL;
-    uint64_t queenAttacksDiag = 0ULL;
-    while (queenBitboard) {
-        int square = __builtin_ctzll(queenBitboard);
-        queenAttacksOrth |= getRookAttacks(square, currentState->bitboards[0]);
-        queenAttacksDiag |= getBishopAttacks(square, currentState->bitboards[0]);
-        queenBitboard &= queenBitboard - 1;
+    // Loop over the opponent's sliders
+    for (int i=0; i<2; i++) {
+        uint64_t sliderBitboard = opponentSlider[i];
+        while (sliderBitboard) {
+            int square = __builtin_ctzll(sliderBitboard); // Get LSB
+            // Get the slider attacks without any blockers
+            uint64_t sliderAttacks = directions[i](square, *kingBitboard);
+            // prettyPrintBitboard(sliderAttacks);
+            if (sliderAttacks & *kingBitboard) {
+                // King is in line of sight of the slider
+                uint64_t *xRayDirection = i == 0 ? &kingXRayOrth : &kingXRayDiag;
+                uint64_t blockers = sliderAttacks & *xRayDirection & currentState->bitboards[0];
+                // Add the pinner attack to the pinners bitboard
+                *pinners |= sliderAttacks & *xRayDirection | (1ULL << square);
+                int numBlockers = countBits(blockers);
+                if (numBlockers == 1) {
+                    // Only one piece is blocking the slider
+                    // printf("One blocker, pinned!\n");
+                    *pinned |= blockers;
+                } else if (numBlockers == 0) { 
+                    // No blockers, king is in check
+                    // printf("No blockers, King is in check\n");
+                    // Generate attacks with all pieces on the board
+                    sliderAttacks = directions[i](square, currentState->bitboards[0]);
+                    currentState->checkBitboard &= ((sliderAttacks & *xRayDirection) | (1ULL << square));
+                }
+            }
+
+            // Clear LSB
+            sliderBitboard &= sliderBitboard - 1;
+        }
     }
-    uint64_t orthAttacks = currentState->attackBitboards[getBitboardIndex(ROOK, !colour)] | queenAttacksOrth;
-    uint64_t diagAttacks = currentState->attackBitboards[getBitboardIndex(BISHOP, !colour)] | queenAttacksDiag;
-    int kingSquare = __builtin_ctzll(currentState->bitboards[getBitboardIndex(KING, colour)]);
-    uint64_t xRayOrth = getRookAttacks(kingSquare, currentState->bitboards[0]);
-    uint64_t xRayDiag = getBishopAttacks(kingSquare, currentState->bitboards[0]);
-    uint64_t potentialPins = (((xRayOrth & orthAttacks)) | (xRayDiag & diagAttacks)) & currentState->bitboards[0];
 
-    // Foreach potential pin, check if it is genuine
-    return potentialPins;
-}
-
-int getDirection(int squareA, int squareB) {
-    // Finds the direction from squareA to squareB
-    // Returns -1 if the squares are not in the same row, column, or diagonal
-
-    // Returns 0 if the squares are in the same row or column (orthogonal)
-    // Returns 1 if the squares are in the same diagonal (diagonal)
-
-    int aRow = squareA / 8;
-    int aCol = squareA % 8;
-    int bRow = squareB / 8;
-    int bCol = squareB % 8;
-
-    // Check if the squares are in the same row or column
-    if (aRow == bRow || aCol == bCol) {
-        return 0; // Orthogonal
-    } else if (abs(aRow - bRow) == abs(aCol - bCol)) {
-        return 1; // Diagonal
-    } else {
-        return -1; // Not in the same row, column, or diagonal
+    // Loop over Pawns, Knights to find checks
+    for (int i=PAWN; i<=KNIGHT; i++) {
+        uint64_t pieceBitboard = currentState->bitboards[i + (!colour * 6)];
+        while (pieceBitboard) {
+            int square = __builtin_ctzll(pieceBitboard);
+            uint64_t pieceAttacks = getPseudoValidMove((Piece){i, !colour}, square, !colour, currentState->bitboards[0]);
+            if (pieceAttacks & *kingBitboard) {
+                // King is in check
+                currentState->checkBitboard &= (1ULL << square);
+            }
+            pieceBitboard &= pieceBitboard - 1;
+        }
     }
-    return -1;
 }
 
-int validateMove2(int colour, Move* move, uint64_t potentialPins) {
-    uint64_t pinnedPieces = getPinnedPieces(colour);
-    int check = isCheck(colour);
-
-    // Cases:
-    // 1: King is in check - remove all moves that don't either block the check, capture the checking piece, or move the king
-
-    // 2. The piece is pinned - remove all moves that move the piece outside of the pin direction
-    return 1;
+uint64_t restrictPinnedPieceMovement(uint64_t pinnedPiece, uint64_t pinner, uint64_t king, uint64_t (*attackMask)(uint64_t, int)) {
+    // Generate attack mask for the pinner
+    uint64_t pinnerAttacks = attackMask(0, pinner);
+    uint64_t between = pinnerAttacks & (attackMask(0, king));
+    
+    // Movement restricted to the line between king and pinner
+    return between & pinnedPiece;
 }
 
 int validateMove(int colour, Move* move) {
     // Make the move
     int bitboardIndex = getBitboardIndex(move->piece.type, colour);
-    if (!makeMove(*move, 1)) {
+
+    // Make the move
+    makeMove(*move, 0);
+
+    // Generate temporary moves for the opponent
+    Move* opponentMoves = malloc(sizeof(Move) * TOTAL_POSSIBLE_MOVES);
+    if (opponentMoves == NULL) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    getPseudoValidMoves(!colour, opponentMoves);
+    int checkFlag = isCheck(colour);
+
+    // Pop the move from the history
+    pop(stateHistory);
+    currentState = peek(stateHistory);
+    free(opponentMoves);
+
+    if (checkFlag) {
+        printf("Invalid move: puts king in check\n");
         // Remove from the attack bitboard
         currentState->attackBitboards[bitboardIndex] &= ~(indexToBitboard(move->to));
         if (move->piece.type == PAWN) {
@@ -400,8 +410,9 @@ int validateMove(int colour, Move* move) {
         // Remove the move from the valid moves
         *move = (Move){{0, 0, NULL}, -1, -1, -999999};
         return 0;
+    } else {
+        return 1;
     }
-    return 1;
 }
 
 void validateMoves(int colour, Move* validMoves) {

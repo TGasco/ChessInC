@@ -8,7 +8,7 @@ struct PieceValues {
 
 extern struct PieceValues pieceValues;
 
-int minimax(int depth, int alpha, int beta, int color);
+int negamax(int depth, int alpha, int beta, int color, int pov);
 // Move findBestMove(int depth, int color);
 // Move findBestMove(int depth, int color, uint64_t* moves);
 Move findBestMove(int depth, int color, Move* moves);

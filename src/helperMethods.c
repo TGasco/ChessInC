@@ -128,3 +128,7 @@ Position squareToPos(int square) {
     // Convert the given square index to a position
     return (Position){square / BOARD_SIZE, square % BOARD_SIZE};
 }
+
+int countBits(uint64_t x) {
+    return __builtin_popcountll(x);
+}

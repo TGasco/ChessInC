@@ -91,8 +91,8 @@ int getBoardAtIndex(int index, int colour) {
         }
     }
     // Return 0 if no piece is found
-    prettyPrintBitboard(currentState->bitboards[colour ? 13 : 14]);
-    printf("WARN: No piece found at index %d\n", index);
+    // prettyPrintBitboard(currentState->bitboards[colour ? 13 : 14]);
+    // printf("WARN: No piece found at index %d\n", index);
     return 1;
 }
 

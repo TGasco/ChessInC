@@ -1,0 +1,8 @@
+{
+    "title": "Chess Engine in C",
+    "description": "An implementation of Chess in C, using SDL for rendering the board and pieces. Play against a friend or against the computer. Computer AI uses a simple minimax algorithm with alpha-beta pruning to make decisions. Features include move validation, checkmate detection, and castling",
+    "technologies": ["C", "SDL Renderer"],
+    "image": "chess-in-c.png",
+    "source": "https://github.com/TGasco",
+    "featured": true
+}

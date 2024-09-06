@@ -32,14 +32,6 @@ void initZobrist() {
     zobristSideToMove = ((uint64_t)rand() << 32) | rand();
 }
 
-int getPieceAt(int square) {
-    // Mock function: should return the piece type at the given square
-    // -1 indicates no piece
-    // 0-5 for white pieces (P, N, B, R, Q, K), 6-11 for black pieces (p, n, b, r, q, k)
-    // For demonstration purposes, return -1 (no piece)
-    return -1;
-}
-
 uint64_t generateZobristKey(BoardState* state) {
     uint64_t hash = 0;
 
@@ -53,6 +45,7 @@ uint64_t generateZobristKey(BoardState* state) {
         }
     }
 
+    // Add the castling rights to the hash
     if (state->castleRights & WHITE_KINGSIDE) {
         hash ^= zobristCastling[0];
     }
@@ -66,13 +59,15 @@ uint64_t generateZobristKey(BoardState* state) {
         hash ^= zobristCastling[3];
     }
 
+    // Add the en passant square to the hash
     if (state->enPassantMask != 0ULL) {
         // Find the file of the en passant square
         int file = __builtin_ctzll(state->enPassantMask) % 8;
         hash ^= zobristEnPassant[file];
     }
 
-    if (state->sideToMove == 1) {
+    // Add the side to move to the hash
+    if (state->sideToMove == BLACK) {
         hash ^= zobristSideToMove;
     }
 
